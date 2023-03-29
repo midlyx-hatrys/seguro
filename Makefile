@@ -56,7 +56,7 @@ default : $(BENCHMARK_CMD) help
 # target: help - Display all targets in makefile
 #
 help :
-	@egrep "^# target:" makefile
+	@egrep "^# target:" Makefile
 
 # Run Seguro tests
 #
@@ -79,7 +79,7 @@ $(TEST_UNIT_CMD) : $(OBJECTS) $(addprefix $(TEST_OBJ_DIR),unit.o)
 
 # Run Seguro integration tests
 #
-# target: test-unit - Run Seguro integration tests
+# target: test-integ - Run Seguro integration tests
 #
 test-integ : $(TEST_INTEG_CMD)
 	@$(TEST_INTEG_CMD)
