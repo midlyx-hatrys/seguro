@@ -1,0 +1,65 @@
+{
+  "nodes": {
+    "mini-compile-commands": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1676165558,
+        "narHash": "sha256-6Jenivk1QnTWzI6kOBppppcQLtfQYgSGRjt08dbyiik=",
+        "owner": "danielbarter",
+        "repo": "mini_compile_commands",
+        "rev": "3551cd34b5111b9564b0eb6fb397c55c09d16d42",
+        "type": "github"
+      },
+      "original": {
+        "owner": "danielbarter",
+        "repo": "mini_compile_commands",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1683082554,
+        "narHash": "sha256-emO6mChgdBi4RwchtCCtAkvFf/OSkMyOQMqk6EZEPJA=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "0d373d5af960504dd60c3d06c65e553b36ef29d8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "parts": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1679737941,
+        "narHash": "sha256-srSD9CwsVPnUMsIZ7Kt/UegkKUEBcTyU1Rev7mO45S0=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "3502ee99d6dade045bdeaf7b0cd8ec703484c25c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "mini-compile-commands": "mini-compile-commands",
+        "nixpkgs": "nixpkgs",
+        "parts": "parts"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
