@@ -326,7 +326,7 @@ int fdb_read_event(Event *event) {
   int32_t out_count;
   uint32_t out_counted = 0;
   uint32_t num_fragments = 0;
-  uint16_t payload_length;
+  uint16_t payload_length = 0;
   uint8_t range_start_key[FDB_KEY_TOTAL_LENGTH];
   uint8_t range_end_key[FDB_KEY_TOTAL_LENGTH];
 

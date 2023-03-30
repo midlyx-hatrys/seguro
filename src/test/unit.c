@@ -122,16 +122,16 @@ void test_fragment_event_large(void) {
   FragmentedEvent f_event;
 
   // Setup event
-  uint64_t id = 789;
-  uint16_t data_length = (3 * OPTIMAL_VALUE_SIZE) + 1;
+  const uint64_t id = 789;
+  const uint16_t data_length = (3 * OPTIMAL_VALUE_SIZE) + 1;
   uint8_t data[data_length];
   Event event = {id, data_length, data};
 
-  uint8_t num_fragments = 4;
+  const uint8_t num_fragments = 4;
 
   // Set first byte of each fragment to 1 (all others are 0)
   data[0] = 1;
-  for (uint32_t i = 0; i < (data_length - 1); ++i) {
+  for (uint16_t i = 0; i < (data_length - 1); ++i) {
     if (i % OPTIMAL_VALUE_SIZE) {
       data[(i + 1)] = 0;
     } else {
