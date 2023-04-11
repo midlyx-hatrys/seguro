@@ -247,17 +247,20 @@ void test_clear_from_fdb(void) {
 
 void test_clear_event(void) {
   FDBTransaction *tx;
-  FragmentedEvent dummy_event;
+  Event dummy_event = {0};
+  FragmentedEventSource dummy_f_event;
   uint64_t event_id = 42;
   uint32_t num_fragments = 10;
-  uint16_t dummy_size = 10000;
+  uint16_t dummy_size = OPTIMAL_VALUE_SIZE;
   uint8_t *dummy_data[num_fragments];
 
   printf("\nStarting fdb_clear_event() test...\n");
 
   // Setup dummy fragmented event
   dummy_event.id = event_id;
-  dummy_event.num_fragments = num_fragments;
+  dummy_event.data_length = num_fragments * dummy_size;
+
+  init_fragmented_event_source(&dummy_f_event, &dummy_event, OPTIMAL_VALUE_SIZE);
 
   // Setup transaction handle
   if (fdb_check_error(fdb_setup_transaction(&tx)))
@@ -289,7 +292,7 @@ void test_clear_event(void) {
   fdb_transaction_destroy(tx);
 
   // Attempt to remove the event from the database
-  fdb_clear_event(&dummy_event);
+  fdb_clear_event(&dummy_f_event);
 
   // Need a new transaction handle to read from the database
   if (fdb_check_error(fdb_setup_transaction(&tx)))
@@ -313,7 +316,7 @@ void test_clear_event(void) {
 
 void test_clear_event_array(void) {
   Event *mock_events;
-  FragmentedEvent *mock_f_events;
+  FragmentedEventSource *mock_f_events;
   FDBTransaction *tx;
   uint32_t num_events = 10;
   uint8_t data_size = 10;
@@ -322,7 +325,7 @@ void test_clear_event_array(void) {
 
   // Setup events
   mock_events = malloc(sizeof(Event) * num_events);
-  mock_f_events = malloc(sizeof(FragmentedEvent) * num_events);
+  mock_f_events = malloc(sizeof(FragmentedEventSource) * num_events);
 
   for (uint8_t i = 0; i < num_events; ++i) {
     // Want deterministic keys that are unordered and don't collide
@@ -330,7 +333,7 @@ void test_clear_event_array(void) {
     mock_events[i].data_length = data_size;
     mock_events[i].data = generate_dummy_data(data_size);
 
-    fragment_event((mock_events + i), (mock_f_events + i));
+    init_fragmented_event_source(&mock_f_events[i], &mock_events[i], OPTIMAL_VALUE_SIZE);
   }
 
   // Setup transaction handle
@@ -343,11 +346,11 @@ void test_clear_event_array(void) {
   // Manually add keys for a dummy event to the database
   for (uint32_t i = 0; i < num_events; ++i) {
     uint8_t key[FDB_KEY_TOTAL_LENGTH];
-    fdb_build_event_key(key, mock_f_events[i].id, 0);
+    fdb_build_event_key(key, mock_f_events[i].src.event.id, 0);
 
     fdb_transaction_set(tx, key, FDB_KEY_TOTAL_LENGTH,
-                        mock_f_events[i].fragments[0],
-                        mock_f_events[i].payload_length);
+                        es_fragment_data(&mock_f_events[i].src, 0),
+                        es_prefix_length(&mock_f_events[i].src));
   }
 
   if (fdb_send_transaction(tx))
@@ -355,7 +358,7 @@ void test_clear_event_array(void) {
 
   // Verify that the events are in the database
   for (uint32_t i = 0; i < num_events; ++i) {
-    assert(count_event_fragments_in_database(tx, mock_f_events[i].id) == 1);
+    assert(count_event_fragments_in_database(tx, mock_f_events[i].src.event.id) == 1);
   }
 
   // fdb_clear_event() uses its own transaction, so we need to discard ours
@@ -373,7 +376,8 @@ void test_clear_event_array(void) {
 
   // Release the dummy data memory
   for (uint8_t i = 0; i < num_events; ++i) {
-    free_event(mock_events + i);
+    free_event(&mock_events[i]);
+    es_free(&mock_f_events[i].src);
   }
   free((void *)mock_f_events);
   free((void *)mock_events);
@@ -387,7 +391,7 @@ void test_clear_event_array(void) {
 
 void test_clear_database(void) {
   Event *mock_events;
-  FragmentedEvent *mock_f_events;
+  FragmentedEventSource *mock_f_events;
   FDBTransaction *tx;
   uint32_t num_events = 5;
   uint32_t num_fragments = 5;
@@ -397,14 +401,14 @@ void test_clear_database(void) {
 
   // Setup events
   mock_events = malloc(sizeof(Event) * num_events);
-  mock_f_events = malloc(sizeof(FragmentedEvent) * num_events);
+  mock_f_events = malloc(sizeof(FragmentedEventSource) * num_events);
 
   for (uint8_t i = 0; i < num_events; ++i) {
     mock_events[i].id = i;
     mock_events[i].data_length = data_size;
     mock_events[i].data = generate_dummy_data(data_size);
 
-    fragment_event((mock_events + i), (mock_f_events + i));
+    init_fragmented_event_source(&mock_f_events[i], &mock_events[i], OPTIMAL_VALUE_SIZE);
   }
 
   // Setup transaction handle
@@ -419,10 +423,10 @@ void test_clear_database(void) {
     uint8_t key[FDB_KEY_TOTAL_LENGTH];
 
     for (uint8_t j = 0; j < num_fragments; ++j) {
-      fdb_build_event_key(key, mock_f_events[i].id, j);
+      fdb_build_event_key(key, mock_f_events[i].src.event.id, j);
 
       fdb_transaction_set(tx, key, FDB_KEY_TOTAL_LENGTH,
-                          mock_f_events[i].fragments[j], OPTIMAL_VALUE_SIZE);
+                          es_fragment_data(&mock_f_events[i].src, j), es_fragment_length(&mock_f_events[i].src, j));
     }
   }
 
@@ -447,7 +451,8 @@ void test_clear_database(void) {
 
   // Release the dummy data memory
   for (uint8_t i = 0; i < num_events; ++i) {
-    free_event(mock_events + i);
+    es_free(&mock_f_events[i].src);
+    free_event(&mock_events[i]);
   }
   free((void *)mock_f_events);
   free((void *)mock_events);
@@ -462,7 +467,7 @@ void test_clear_database(void) {
 void test_write_batch(void) {
   FDBTransaction *tx;
   Event mock_event;
-  FragmentedEvent mock_f_event;
+  FragmentedEventSource mock_f_event;
   uint64_t event_id = 42;
   uint32_t num_fragments = 3;
   uint32_t fragment_pos = 0;
@@ -479,7 +484,7 @@ void test_write_batch(void) {
   mock_event.data_length = data_size;
   mock_event.data = generate_dummy_data(data_size);
 
-  fragment_event(&mock_event, &mock_f_event);
+  init_fragmented_event_source(&mock_f_event, &mock_event, OPTIMAL_VALUE_SIZE);
 
   // Setup transaction handle
   if (fdb_check_error(fdb_setup_transaction(&tx)))
@@ -494,7 +499,7 @@ void test_write_batch(void) {
 
   // Write event one batch at a time, counting batches
   while (fragment_pos != num_fragments) {
-    fdb_write_batch(&mock_f_event, &fragment_pos);
+    fdb_write_batch(&mock_f_event.src, &fragment_pos);
     ++batch_count;
   }
 
@@ -510,7 +515,8 @@ void test_write_batch(void) {
   assert(count_event_fragments_in_database(tx, event_id) == num_fragments);
 
   // Release the dummy data memory
-  free((void *)mock_event.data);
+  free_event(&mock_event);
+  es_free(&mock_f_event.src);
 
   // Release the transaction handle
   fdb_transaction_destroy(tx);
@@ -525,7 +531,7 @@ void test_write_batch(void) {
 void test_write_fragmented_event(void) {
   FDBTransaction *tx;
   Event mock_event;
-  FragmentedEvent mock_f_event;
+  FragmentedEventSource mock_f_event;
   uint64_t event_id = 42;
   uint32_t num_fragments = 3;
   uint32_t data_size = (num_fragments * OPTIMAL_VALUE_SIZE);
@@ -540,7 +546,7 @@ void test_write_fragmented_event(void) {
   mock_event.data_length = data_size;
   mock_event.data = generate_dummy_data(data_size);
 
-  fragment_event(&mock_event, &mock_f_event);
+  init_fragmented_event_source(&mock_f_event, &mock_event, OPTIMAL_VALUE_SIZE);
 
   // Setup transaction handle
   if (fdb_check_error(fdb_setup_transaction(&tx)))
@@ -554,7 +560,7 @@ void test_write_fragmented_event(void) {
   fdb_transaction_destroy(tx);
 
   // Attempt to write event to FoundationDB cluster
-  fdb_write_fragmented_event(&mock_f_event);
+  fdb_write_event(&mock_f_event.src);
 
   // Need a new transaction handle to read from the database
   if (fdb_check_error(fdb_setup_transaction(&tx)))
@@ -565,7 +571,7 @@ void test_write_fragmented_event(void) {
   assert(count_event_fragments_in_database(tx, event_id) == num_fragments);
 
   // Release the dummy data memory
-  free((void *)mock_event.data);
+  es_free(&mock_f_event.src);
 
   // Release the transaction handle
   fdb_transaction_destroy(tx);
@@ -639,7 +645,7 @@ void test_write_event_array(void) {
 void test_write_fragmented_event_array(void) {
   FDBTransaction *tx;
   Event *mock_events;
-  FragmentedEvent *mock_f_events;
+  FragmentedEventSource *mock_f_events;
   uint32_t num_events = 4;
 
   printf("\nStarting fdb_write_fragmented_event_array() test...\n");
@@ -649,7 +655,7 @@ void test_write_fragmented_event_array(void) {
 
   // Setup events
   mock_events = malloc(sizeof(Event) * num_events);
-  mock_f_events = malloc(sizeof(FragmentedEvent) * num_events);
+  mock_f_events = malloc(sizeof(FragmentedEventSource) * num_events);
 
   for (uint8_t i = 0; i < num_events; ++i) {
     // Want to test mixing events, splitting events in the middle, and multiple
@@ -660,7 +666,7 @@ void test_write_fragmented_event_array(void) {
     mock_events[i].data_length = data_size;
     mock_events[i].data = generate_dummy_data(data_size);
 
-    fragment_event((mock_events + i), (mock_f_events + i));
+    init_fragmented_event_source(&mock_f_events[i], &mock_events[i], OPTIMAL_VALUE_SIZE);
   }
 
   // Setup transaction handle
@@ -683,13 +689,14 @@ void test_write_fragmented_event_array(void) {
 
   // Verify that the events are in the database
   for (uint8_t i = 0; i < num_events; ++i) {
-    assert(count_event_fragments_in_database(tx, mock_f_events[i].id) ==
-           mock_f_events[i].num_fragments);
+    assert(count_event_fragments_in_database(tx, mock_f_events[i].src.event.id) ==
+           es_num_fragments(&mock_f_events[i].src));
   }
 
   // Release the dummy data memory
   for (uint8_t i = 0; i < num_events; ++i) {
-    free_event(mock_events + i);
+    free_event(&mock_events[i]);
+    es_free(&mock_f_events[i].src);
   }
   free((void *)mock_f_events);
   free((void *)mock_events);
@@ -707,7 +714,7 @@ void test_write_fragmented_event_array(void) {
 void test_read_event(void) {
   FDBTransaction *tx;
   Event mock_event, return_event;
-  FragmentedEvent mock_f_event;
+  FragmentedEventSource mock_f_event;
   uint64_t event_id = 42;
   uint32_t data_size = (3 * OPTIMAL_VALUE_SIZE);
 
@@ -721,7 +728,7 @@ void test_read_event(void) {
   mock_event.data_length = data_size;
   mock_event.data = generate_dummy_data(data_size);
 
-  fragment_event(&mock_event, &mock_f_event);
+  init_fragmented_event_source(&mock_f_event, &mock_event, OPTIMAL_VALUE_SIZE);
 
   return_event.id = event_id;
 
@@ -737,18 +744,19 @@ void test_read_event(void) {
   fdb_transaction_destroy(tx);
 
   // Write event to FoundationDB cluster
-  fdb_write_fragmented_event(&mock_f_event);
+  fdb_write_event(&mock_f_event.src);
 
   // Attempt to read event back from FoundationDB cluster
   fdb_read_event(&return_event);
 
   // Verify that output data matches input data
   assert(mock_event.data_length == return_event.data_length);
-  assert(!memcmp(mock_event.data, return_event.data, data_size));
+  assert(!memcmp(mock_f_event.src.event.data, return_event.data, data_size));
 
   // Release the dummy data memory
-  free((void *)mock_event.data);
-  free((void *)return_event.data);
+  es_free(&mock_f_event.src);
+  free_event(&mock_event);
+  free_event(&return_event);
 
   // Clear the database
   fdb_clear_database();

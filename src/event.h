@@ -5,6 +5,7 @@
 #pragma once
 
 #include <foundationdb/fdb_c.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define EXTENDED_HEADER 0x80
@@ -20,28 +21,9 @@ typedef struct event_t {
   uint8_t *data;        // Pointer to event data array.
 } Event;
 
-typedef struct fragmented_event_t {
-  uint64_t id;                     // Unique, ordered identifier for event.
-  uint32_t num_fragments;          // Number of fragments to split event into.
-  uint8_t header[MAX_HEADER_SIZE]; // Header for first fragment which encodes
-                                   // the number of fragments.
-  uint8_t header_length;           // Length of header in bytes.
-  uint16_t payload_length;         // Length of data payload of first fragment.
-  uint8_t **fragments;             // Fragment array as pointers into raw
-                                   // event array.
-} FragmentedEvent;
-
 //==============================================================================
 // Prototypes
 //==============================================================================
-
-/// Split an event into one or more fragments. This is necessary for improved
-/// performance when writing to a database, or for the database to accept the
-/// event at all.
-///
-/// @param[in] event    The event to split into one or more fragments.
-/// @param[in] f_event  Pointer to the FragmentedEvent object to write into.
-void fragment_event(Event *event, FragmentedEvent *f_event);
 
 /// Create the header for a fragmented event, which stores the number of
 /// fragments of which an event is composed.
@@ -65,7 +47,62 @@ uint8_t read_header(const uint8_t *header, uint32_t *num_fragments);
 /// @param[in] event  The event to deallocate.
 void free_event(Event *event);
 
-/// Deallocate the heap memory used by a fragmented event.
-///
-/// @param[in] event  The fragmented event to deallocate.
-void free_fragmented_event(FragmentedEvent *event);
+#ifndef container_of
+#define container_of(ptr, type, member) \
+  ((type *)((char *)(ptr) - offsetof(type, member)))
+#endif
+
+typedef struct source_t {
+  Event event;
+  const struct source_ops_t *ops;
+} Source;
+
+void init_event_source(Source *es, Event *event, const struct source_ops_t *ops);
+
+typedef struct source_ops_t {
+  uint32_t (*length)(const Source *src);
+  uint32_t (*num_fragments)(const Source *src);
+  uint8_t (*header_length)(const Source *src);
+  const uint8_t *(*header)(const Source *src);
+  uint32_t (*prefix_length)(const Source *src);
+  uint32_t (*fragment_length)(const Source *src, uint32_t fragment);
+  uint8_t *(*fragment_data)(const Source *src, uint32_t fragment);
+  void (*free)(Source *src);
+} SourceOps;
+
+static uint32_t __attribute__((used)) es_length(const Source *src) {
+  return src->ops->length(src);
+}
+static uint32_t __attribute__((used)) es_num_fragments(const Source *src) {
+  return src->ops->num_fragments(src);
+}
+static uint8_t __attribute__((used)) es_header_length(const Source *src) {
+  return src->ops->header_length(src);
+}
+static const uint8_t *  __attribute__((used)) es_header(const Source *src) {
+  return src->ops->header(src);
+}
+static uint32_t __attribute__((used)) es_prefix_length(const Source *src) {
+  return src->ops->prefix_length(src);
+}
+static uint32_t __attribute__((used)) es_fragment_length(const Source *src, uint32_t fragment) {
+  return src->ops->fragment_length(src, fragment);
+}
+static uint8_t * __attribute__((used)) es_fragment_data(const Source *src, uint32_t fragment) {
+  return src->ops->fragment_data(src, fragment);
+}
+static void __attribute__((used)) es_free(Source *src) {
+  src->ops->free(src);
+}
+
+typedef struct {
+  uint32_t fragment_length;
+  uint8_t header[MAX_HEADER_SIZE]; // Header for first fragment which encodes
+                                   // the number of fragments.
+  uint8_t header_length;           // Length of header in bytes.
+  Source src;
+} FragmentedEventSource;
+
+void init_fragmented_event_source(FragmentedEventSource *es,
+                                  Event *event,
+                                  uint32_t fragment_length);
