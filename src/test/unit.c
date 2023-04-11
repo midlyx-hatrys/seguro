@@ -70,7 +70,7 @@ void test_fragment_event(void) {
 }
 
 void test_fragment_event_trivial(void) {
-  FragmentedEvent f_event;
+  FragmentedEventSource f_event;
 
   // Setup event
   uint64_t id = 123;
@@ -78,23 +78,23 @@ void test_fragment_event_trivial(void) {
   Event event = {id, 1, data};
 
   // Fragment event
-  fragment_event(&event, &f_event);
+  init_fragmented_event_source(&f_event, &event, OPTIMAL_VALUE_SIZE);
 
   // Confirm correct state
   printf("\ttrivial event fragmentation... ");
 
-  assert(f_event.id == id);
-  assert(f_event.num_fragments == 1);
-  assert(f_event.header[0] == 0);
-  assert(f_event.header_length == 1);
-  assert(f_event.payload_length == 1);
-  assert(f_event.fragments[0] == data);
+  assert(f_event.src.event.id == id);
+  assert(es_num_fragments(&f_event.src) == 1);
+  assert(es_header(&f_event.src)[0] == 0);
+  assert(es_header_length(&f_event.src) == 1);
+  assert(es_prefix_length(&f_event.src) == 1);
+  assert(es_fragment_data(&f_event.src, 0) == data);
 
   printf(" PASSED\n");
 }
 
 void test_fragment_event_small(void) {
-  FragmentedEvent f_event;
+  FragmentedEventSource f_event;
 
   // Setup event
   uint64_t id = 456;
@@ -103,23 +103,23 @@ void test_fragment_event_small(void) {
   Event event = {id, data_length, data};
 
   // Fragment event
-  fragment_event(&event, &f_event);
+  init_fragmented_event_source(&f_event, &event, OPTIMAL_VALUE_SIZE);
 
   // Confirm correct state
   printf("\tmax size single fragment... ");
 
-  assert(f_event.id == id);
-  assert(f_event.num_fragments == 1);
-  assert(f_event.header[0] == 0);
-  assert(f_event.header_length == 1);
-  assert(f_event.payload_length == data_length);
-  assert(f_event.fragments[0] == data);
+  assert(f_event.src.event.id == id);
+  assert(es_num_fragments(&f_event.src) == 1);
+  assert(es_header(&f_event.src)[0] == 0);
+  assert(es_header_length(&f_event.src) == 1);
+  assert(es_prefix_length(&f_event.src) == data_length);
+  assert(es_fragment_data(&f_event.src, 0) == data);
 
   printf(" PASSED\n");
 }
 
 void test_fragment_event_large(void) {
-  FragmentedEvent f_event;
+  FragmentedEventSource f_event;
 
   // Setup event
   const uint64_t id = 789;
@@ -140,20 +140,22 @@ void test_fragment_event_large(void) {
   }
 
   // Fragment event
-  fragment_event(&event, &f_event);
+  init_fragmented_event_source(&f_event, &event, OPTIMAL_VALUE_SIZE);
 
   // Confirm correct state
   printf("\tmultiple fragments w/ leftover... ");
 
-  assert(f_event.id == id);
-  assert(f_event.num_fragments == num_fragments);
-  assert(f_event.header[0] == (num_fragments - 1));
-  assert(f_event.header_length == 1);
-  assert(f_event.payload_length == 1);
-  assert(f_event.fragments[0][0] == 1);
-  assert(f_event.fragments[0][1] == 1);
-  assert(f_event.fragments[0][(OPTIMAL_VALUE_SIZE + 1)] == 1);
-  assert(f_event.fragments[0][((2 * OPTIMAL_VALUE_SIZE) + 1)] == 1);
+  assert(f_event.src.event.id == id);
+  assert(es_num_fragments(&f_event.src) == num_fragments);
+  assert(es_header(&f_event.src)[0] == (num_fragments - 1));
+  assert(es_header_length(&f_event.src) == 1);
+  assert(es_prefix_length(&f_event.src) == 1);
+
+  const uint8_t *prefix = es_fragment_data(&f_event.src, 0);
+  assert(prefix[0] == 1);
+  assert(prefix[1] == 1);
+  assert(prefix[OPTIMAL_VALUE_SIZE + 1] == 1);
+  assert(prefix[(2 * OPTIMAL_VALUE_SIZE) + 1] == 1);
 
   printf(" PASSED\n");
 }

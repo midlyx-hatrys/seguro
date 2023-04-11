@@ -60,7 +60,7 @@ int fdb_send_timed_transaction(FDBTransaction *tx,
 ///
 /// @return  0  Success
 /// @return -1  Failure
-int fdb_timed_write_event_array(FragmentedEvent *events, uint32_t num_events);
+int fdb_timed_write_event_array(const FragmentedEventSource *events, uint32_t num_events);
 
 /// Asynchronously write an array of fragmented events and time the process.
 ///
@@ -69,7 +69,7 @@ int fdb_timed_write_event_array(FragmentedEvent *events, uint32_t num_events);
 ///
 /// @return  0  Success.
 /// @return -1  Failure.
-int fdb_timed_write_event_array_async(FragmentedEvent *events,
+int fdb_timed_write_event_array_async(const FragmentedEventSource *events,
                                       uint32_t num_events);
 
 /// Clears the database after the synchronous write benchmark finishes.
@@ -103,7 +103,7 @@ int fdb_clear_timed_database_async(uint32_t num_events, uint32_t num_fragments);
 /// @param[in] limit      Absolute limit on the number of fragments to write.
 ///
 /// @return   Number of event fragments added to transaction.
-uint32_t add_event_set_transactions(FDBTransaction *tx, FragmentedEvent *event,
+uint32_t add_event_set_transactions(FDBTransaction *tx, const Source *event,
                                     uint32_t start_pos, uint32_t limit);
 
 /// Check if a FoundationDB API command returned an error. If so, print the

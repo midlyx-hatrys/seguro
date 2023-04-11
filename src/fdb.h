@@ -77,37 +77,29 @@ int fdb_send_transaction(FDBTransaction *tx);
 /// updates the position variable to the first fragment not in included in the
 /// batch.
 ///
-/// @param[in] event  Handle for the event.
+/// @param[in] src    Handle for the event source.
 /// @param[in] pos    Position first fragment to write in the fragments array.
 ///
 /// @return  0  Success.
 /// @return -1  Failure.
-int fdb_write_batch(FragmentedEvent *event, uint32_t *pos);
+int fdb_write_batch(const Source *src, uint32_t *pos);
 
-/// Write a single event (fragmentation is automatic).
+/// Write a single event source.
 ///
-/// @param[in] event  Handle for the event to write.
+/// @param[in] src   Handle for the event source to write.
 ///
 /// @return  0  Success.
 /// @return -1  Failure.
-int fdb_write_event(Event *event);
-
-/// Write a single fragmented event.
-///
-/// @param[in] event  Handle for the fragmented event to write.
-///
-/// @return  0  Success.
-/// @return -1  Failure.
-int fdb_write_fragmented_event(FragmentedEvent *event);
+int fdb_write_event(const Source *src);
 
 /// Write an array of fragmented events.
 ///
-/// @param[in] events      Handle for the array of events to write.
+/// @param[in] events      Handle for the array of event sources to write.
 /// @param[in] num_events  Number of events in the array.
 ///
 /// @return  0  Success
 /// @return -1  Failure
-int fdb_write_fragmented_event_array(FragmentedEvent *f_events,
+int fdb_write_fragmented_event_array(const FragmentedEventSource f_events[],
                                      uint32_t num_events);
 
 /// Write an array of events.
@@ -117,7 +109,7 @@ int fdb_write_fragmented_event_array(FragmentedEvent *f_events,
 ///
 /// @return  0  Success
 /// @return -1  Failure
-int fdb_write_event_array(Event *events, uint32_t num_events);
+int fdb_write_event_array(Event events[], uint32_t num_events);
 
 /// Read event fragments from the database and combine them into one event.
 ///
@@ -142,7 +134,7 @@ int fdb_read_event_array(Event *events, uint32_t num_events);
 ///
 /// @return  0  Success.
 /// @return -1  Failure.
-int fdb_clear_event(FragmentedEvent *event);
+int fdb_clear_event(const FragmentedEventSource *event);
 
 /// Remove an array of fragmented events from the database.
 ///
@@ -151,7 +143,7 @@ int fdb_clear_event(FragmentedEvent *event);
 ///
 /// @return  0  Success.
 /// @return -1  Failure.
-int fdb_clear_event_array(FragmentedEvent *events, uint32_t num_events);
+int fdb_clear_event_array(const FragmentedEventSource events[], uint32_t num_events);
 
 /// Remove all key-value pairs from the database.
 ///

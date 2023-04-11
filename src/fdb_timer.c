@@ -58,7 +58,7 @@ void reset_timer(void);
 /// @param[in]  num_events  Number of events in the array.
 ///
 /// @return  Number of total fragments.
-uint32_t total_fragments(FragmentedEvent *events, uint32_t num_events);
+uint32_t total_fragments(const FragmentedEventSource *events, uint32_t num_events);
 
 //==============================================================================
 // Functions
@@ -97,7 +97,7 @@ tx_fail:
   return -1;
 }
 
-int fdb_timed_write_event_array(FragmentedEvent *events, uint32_t num_events) {
+int fdb_timed_write_event_array(const FragmentedEventSource *events, uint32_t num_events) {
   FDBTransaction *tx;
   clock_t *start_t;
   uint32_t batch_filled = 0;
@@ -114,19 +114,19 @@ int fdb_timed_write_event_array(FragmentedEvent *events, uint32_t num_events) {
     // (method differs slightly depending on whether there are already other
     // fragments in the batch)
     if (!batch_filled) {
-      batch_filled = add_event_set_transactions(tx, (events + i), frag_pos,
+      batch_filled = add_event_set_transactions(tx, &events[i].src, frag_pos,
                                                 fdb_batch_size);
       frag_pos += batch_filled;
     } else {
       uint32_t num_kvp = add_event_set_transactions(
-          tx, (events + i), frag_pos, (fdb_batch_size - batch_filled));
+          tx, &events[i].src, frag_pos, (fdb_batch_size - batch_filled));
       batch_filled += num_kvp;
       frag_pos += num_kvp;
     }
 
     // Increment event counter when all fragments from an event have been
     // written
-    if (frag_pos == events[i].num_fragments) {
+    if (frag_pos == es_num_fragments(&events[i].src)) {
       i += 1;
       frag_pos = 0;
     }
@@ -163,7 +163,7 @@ tx_fail:
   return -1;
 }
 
-int fdb_timed_write_event_array_async(FragmentedEvent *events,
+int fdb_timed_write_event_array_async(const FragmentedEventSource *events,
                                       uint32_t num_events) {
   uint32_t i = 0;
   uint32_t b = 0;
@@ -187,17 +187,17 @@ int fdb_timed_write_event_array_async(FragmentedEvent *events,
 
   while (i < num_events) {
     if (batch_filled == 0) {
-      batch_filled = add_event_set_transactions(txs[b], (events + i), frag_pos,
+      batch_filled = add_event_set_transactions(txs[b], &events[i].src, frag_pos,
                                                 fdb_batch_size);
       frag_pos += batch_filled;
     } else {
       uint32_t num_kvp = add_event_set_transactions(
-          txs[b], (events + i), frag_pos, (fdb_batch_size - batch_filled));
+          txs[b], &events[i].src, frag_pos, (fdb_batch_size - batch_filled));
       batch_filled += num_kvp;
       frag_pos += num_kvp;
     }
 
-    if (frag_pos == events[i].num_fragments) {
+    if (frag_pos == es_num_fragments(&events[i].src)) {
       i++;
       frag_pos = 0;
     }
@@ -407,10 +407,10 @@ void reset_timer(void) {
   timer_sync.t_total = 0.0;
 }
 
-uint32_t total_fragments(FragmentedEvent *events, uint32_t num_events) {
+uint32_t total_fragments(const FragmentedEventSource *events, uint32_t num_events) {
   uint32_t sum = 0;
   for (uint32_t i = 0; i < num_events; i++) {
-    sum += events[i].num_fragments;
+    sum += es_num_fragments(&events[i].src);
   }
   return sum;
 }
