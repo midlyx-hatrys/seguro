@@ -6,6 +6,7 @@
 /// Potentially helpful documentation:
 ///   https://stackoverflow.com/questions/50519331/how-does-foundationdb-handle-conflicting-transactions
 
+#include <assert.h>
 #include <foundationdb/fdb_c.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -318,7 +319,7 @@ int fdb_read_event(Event *event) {
   int32_t out_count;
   uint32_t out_counted = 0;
   uint32_t num_fragments = 0;
-  uint16_t payload_length = 0;
+  uint16_t prefix_length = 0;
   uint8_t range_start_key[FDB_KEY_TOTAL_LENGTH];
   uint8_t range_end_key[FDB_KEY_TOTAL_LENGTH];
 
@@ -337,7 +338,7 @@ int fdb_read_event(Event *event) {
 
     // Read data range
     future = fdb_transaction_get_range(
-        tx, range_start_key, FDB_KEY_TOTAL_LENGTH, 1, out_counted,
+        tx, range_start_key, FDB_KEY_TOTAL_LENGTH, 0, (out_counted + 1),
         range_end_key, FDB_KEY_TOTAL_LENGTH, 0, 1, 0, 0,
         FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0);
     if (fdb_check_error(fdb_future_block_until_ready(future)))
@@ -350,19 +351,17 @@ int fdb_read_event(Event *event) {
 
     // Read header from very first batch
     if (!num_fragments) {
-      // Get number of fragments and header length
-      uint8_t header_length =
-          read_header((const uint8_t *)out_kv[0].value, &num_fragments);
+      // Get number of fragments
+      assert(out_kv[0].key_length > FDB_KEY_TOTAL_LENGTH);
+      (void)read_header((const uint8_t *)out_kv[0].key + FDB_KEY_TOTAL_LENGTH, &num_fragments);
 
-      // Use header length to calculate payload
-      payload_length = (out_kv[0].value_length - header_length);
-
-      // Allocate memory for the event and copy the payload
+      // Allocate memory for the event and copy the prefix
       event->data_length =
-          ((num_fragments * OPTIMAL_VALUE_SIZE) + payload_length);
+          ((num_fragments * OPTIMAL_VALUE_SIZE) + out_kv[0].value_length);
       event->data = malloc(sizeof(uint8_t) * event->data_length);
 
-      memcpy(event->data, (out_kv[0].value + header_length), payload_length);
+      memcpy(event->data, out_kv[0].value, out_kv[0].value_length);
+      prefix_length = out_kv[0].value_length;
 
       // Header stores number of ADDITIONAL fragments
       ++num_fragments;
@@ -370,11 +369,12 @@ int fdb_read_event(Event *event) {
 
     // Copy each fragment to final event memory (skipping the first fragment)
     for (uint8_t i = (out_counted == 0); i < out_count; ++i) {
+      assert(out_kv[i].key_length == FDB_KEY_TOTAL_LENGTH);
       // Every fragment after the first should be EXACTLY the preset size
       if (out_kv[i].value_length != OPTIMAL_VALUE_SIZE)
         goto tx_fail;
 
-      memcpy((event->data + payload_length + (OPTIMAL_VALUE_SIZE * (i - 1))),
+      memcpy((event->data + prefix_length + (OPTIMAL_VALUE_SIZE * (i - 1))),
              out_kv[i].value, OPTIMAL_VALUE_SIZE);
     }
 
@@ -538,21 +538,16 @@ uint32_t add_event_set_transactions(FDBTransaction *tx, const Source *event,
   uint32_t end_pos =
       (max_pos < es_num_fragments(event)) ? max_pos : es_num_fragments(event);
   uint32_t num_kvp = end_pos - start_pos;
-  uint8_t key[FDB_KEY_TOTAL_LENGTH] = {0};
+  uint8_t key[FDB_KEY_TOTAL_LENGTH + MAX_HEADER_SIZE] = {0};
 
   // Special rules for first fragment
   if (!start_pos) {
-    // First fragment contains header and has an irregularly sized payload
-    uint32_t value_length = es_header_length(event) + es_prefix_length(event);
-    uint8_t value[value_length];
-
-    memcpy(value, es_header(event), es_header_length(event));
-    memcpy((value + es_header_length(event)), es_fragment_data(event, 0),
-           es_prefix_length(event));
-
     fdb_build_event_key(key, event->event.id, 0);
+    // First fragment's key also contains the header
+    memcpy(key + FDB_KEY_TOTAL_LENGTH, es_header(event), es_header_length(event));
 
-    fdb_transaction_set(tx, key, FDB_KEY_TOTAL_LENGTH, value, value_length);
+    fdb_transaction_set(tx, key, FDB_KEY_TOTAL_LENGTH + es_header_length(event),
+                        es_fragment_data(event, 0), es_prefix_length(event));
 
     ++start_pos;
   }

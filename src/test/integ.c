@@ -689,8 +689,8 @@ void test_write_fragmented_event_array(void) {
 
   // Verify that the events are in the database
   for (uint8_t i = 0; i < num_events; ++i) {
-    assert(count_event_fragments_in_database(tx, mock_f_events[i].src.event.id) ==
-           es_num_fragments(&mock_f_events[i].src));
+    uint32_t db_fragments = count_event_fragments_in_database(tx, mock_f_events[i].src.event.id);
+    assert(db_fragments == es_num_fragments(&mock_f_events[i].src));
   }
 
   // Release the dummy data memory
@@ -853,7 +853,7 @@ uint32_t count_event_fragments_in_database(FDBTransaction *tx,
   do {
     out_more = 0;
     future = fdb_transaction_get_range(
-        tx, range_start_key, FDB_KEY_TOTAL_LENGTH, 1, out_total, range_end_key,
+        tx, range_start_key, FDB_KEY_TOTAL_LENGTH, 0, (out_total + 1), range_end_key,
         FDB_KEY_TOTAL_LENGTH, 0, 1, 0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0);
 
     if (fdb_check_error(fdb_future_block_until_ready(future)))
