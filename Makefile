@@ -3,7 +3,7 @@
 #==============================================================================
 
 CC := gcc
-CSTD := -std=c11
+CSTD := -std=gnu11
 DEV_CFLAGS := -Wall -Wextra -Wpedantic -Wformat=2 -Wno-unused-parameter \
              -Wshadow -Wwrite-strings -Wstrict-prototypes \
              -Wold-style-definition -Wredundant-decls -Wnested-externs \
@@ -26,6 +26,10 @@ BENCH_DEP_DIR := dep/benchmark/
 BENCH_OBJ_DIR := obj/benchmark/
 BENCH_SRC_DIR := src/benchmark/
 
+ASYNC_DEP_DIR := dep/async/
+ASYNC_OBJ_DIR := obj/async/
+ASYNC_SRC_DIR := src/async/
+
 SOURCES := $(shell ls $(SRC_DIR)*.c)
 OBJECTS := $(subst $(SRC_DIR),$(OBJ_DIR),$(subst .c,.o,$(SOURCES)))
 DEPFILES := $(subst $(SRC_DIR),$(DEP_DIR),$(subst .c,.d,$(SOURCES)))
@@ -38,10 +42,16 @@ BENCH_SOURCES := $(shell ls $(BENCH_SRC_DIR)*.c)
 BENCH_OBJECTS := $(subst $(BENCH_SRC_DIR),$(BENCH_OBJ_DIR),$(subst .c,.o,$(BENCH_SOURCES)))
 BENCH_DEPFILES := $(subst $(BENCH_SRC_DIR),$(BENCH_DEP_DIR),$(subst .c,.d,$(BENCH_SOURCES)))
 
+ASYNC_SOURCES := $(shell ls $(ASYNC_SRC_DIR)*.c)
+ASYNC_OBJECTS := $(subst $(ASYNC_SRC_DIR),$(ASYNC_OBJ_DIR),$(subst .c,.o,$(ASYNC_SOURCES)))
+ASYNC_DEPFILES := $(subst $(ASYNC_SRC_DIR),$(ASYNC_DEP_DIR),$(subst .c,.d,$(ASYNC_SOURCES)))
+
 TEST_UNIT_CMD := $(addprefix $(BIN_DIR),seguro-test-unit)
 TEST_INTEG_CMD := $(addprefix $(BIN_DIR),seguro-test-integ)
 
 BENCHMARK_WRITE_CMD := $(addprefix $(BIN_DIR),seguro-benchmark-write)
+
+ASYNC_CMD := $(addprefix $(BIN_DIR),seguro)
 
 #==============================================================================
 # RULES
@@ -109,6 +119,10 @@ $(BENCHMARK_WRITE_CMD) : $(OBJECTS) $(addprefix $(BENCH_OBJ_DIR),write.o)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(addprefix $(BENCH_OBJ_DIR),write.o) $(OBJECTS) $(LINK_FLAGS) -o $@
 
+$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(addprefix $(ASYNC_OBJ_DIR),server.o) $(OBJECTS) $(LINK_FLAGS) -uv -o $@
+
 # Compile all source files, but do not link. As a side effect, compile a dependency file for each source file.
 #
 # Dependency files are a common makefile feature used to speed up builds by auto-generating granular makefile targets.
@@ -140,9 +154,15 @@ $(addprefix $(BENCH_DEP_DIR),%.d): $(addprefix $(BENCH_SRC_DIR),%.c)
 	$(CC) -MD -MP -MF $@ -MT '$@ $(subst $(DEP_DIR),$(OBJ_DIR),$(@:.d=.o))' \
 		$< -c -o $(subst $(DEP_DIR),$(OBJ_DIR),$(@:.d=.o)) $(CSTD) $(PARAMS) $(DEV_CFLAGS)
 
+$(addprefix $(ASYNC_DEP_DIR),%.d): $(addprefix $(ASYNC_SRC_DIR),%.c)
+	@mkdir -p $(ASYNC_OBJ_DIR)
+	@mkdir -p $(ASYNC_DEP_DIR)
+	$(CC) -MD -MP -MF $@ -MT '$@ $(subst $(DEP_DIR),$(OBJ_DIR),$(@:.d=.o))' \
+		$< -c -o $(subst $(DEP_DIR),$(OBJ_DIR),$(@:.d=.o)) $(CSTD) $(PARAMS) $(DEV_CFLAGS)
+
 # Force build of dependency and object files to import additional makefile targets
 #
--include $(DEPFILES) $(TEST_DEPFILES) $(BENCH_DEPFILES)
+-include $(DEPFILES) $(TEST_DEPFILES) $(BENCH_DEPFILES) $(ASYNC_DEPFILES)
 
 # Clean up files produced by the makefile. Any invocation should execute, regardless of file modification date, hence
 # dependency on FRC.
