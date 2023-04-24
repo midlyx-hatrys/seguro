@@ -13,11 +13,17 @@
       url = "github:danielbarter/mini_compile_commands";
       flake = false;
     };
+
+    urbit-cob = {
+      url = "github:midlyx-hatrys/urbit-cob";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs @ {
     self
     , nixpkgs
+    , urbit-cob
     , parts
     , mini-compile-commands
   }: parts.lib.mkFlake { inherit inputs; } (let
@@ -32,23 +38,14 @@
         inherit (pkgs)
           gnumake
         ;
-      }
-      # provisional Rust stuff
-      ++ (attrValues {
-        inherit (pkgs)
-          cargo
-          rustc
-        ;
-        inherit (llvm)
-          clang
-        ;
-      });
+      };
       buildInputs = attrValues {
         inherit (pkgs)
           foundationdb71
           libuv
         ;
-      };
+      }
+      ++ [urbit-cob.packages.${pkgs.system}.default];
       LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
     };
   in {
@@ -77,14 +74,6 @@
             inherit (pkgs)
               gdb
               valgrind
-            ;
-          })
-          # provisional Rust stuff
-          ++ (attrValues {
-            inherit (pkgs)
-              cargo-edit
-              clippy
-              rustfmt
             ;
           });
         });
