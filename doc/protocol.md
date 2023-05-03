@@ -98,7 +98,7 @@
 - Once the event is committed, server says `COMMITTED`, event id, data
   length.  The information must match the `SAVE` request.
   
-- Until the `COMMITTED MANY` notification is emitted, client must not
+- Until the `COMMITTED` notification is emitted, client must not
   issue any new commands.
   
 [ Strictly speaking this flow is redundant because writing one event

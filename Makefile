@@ -119,9 +119,9 @@ $(BENCHMARK_WRITE_CMD) : $(OBJECTS) $(addprefix $(BENCH_OBJ_DIR),write.o)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(addprefix $(BENCH_OBJ_DIR),write.o) $(OBJECTS) $(LINK_FLAGS) -o $@
 
-$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o)
+$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(addprefix $(ASYNC_OBJ_DIR),server.o) $(OBJECTS) $(LINK_FLAGS) -uv -o $@
+	$(CC) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o) $(OBJECTS) $(LINK_FLAGS) -lurbit-ob -luv -o $@
 
 # Compile all source files, but do not link. As a side effect, compile a dependency file for each source file.
 #
