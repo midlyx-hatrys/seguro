@@ -57,9 +57,11 @@ ASYNC_CMD := $(addprefix $(BIN_DIR),seguro)
 # RULES
 #==============================================================================
 
+.PHONY: default help test test-integ test-unit clean benchmark benchmark-write
+
 # Default target. Compile & link all source files, then print usage instructions.
 #
-default : $(BENCHMARK_CMD) help
+default : $(TEST_UNIT_CMD) $(TEST_INTEG_CMD) $(ASYNC_CMD) $(BENCHMARK_WRITE_CMD) help
 
 # Helpful rule which lists all other rules and encourages documentation
 #
@@ -119,9 +121,9 @@ $(BENCHMARK_WRITE_CMD) : $(OBJECTS) $(addprefix $(BENCH_OBJ_DIR),write.o)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(addprefix $(BENCH_OBJ_DIR),write.o) $(OBJECTS) $(LINK_FLAGS) -o $@
 
-$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o)
+$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o log.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o) $(OBJECTS) $(LINK_FLAGS) -lurbit-ob -luv -o $@
+	$(CC) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o) $(OBJECTS) $(LINK_FLAGS) -lurbit-ob -luv -lgmp -lmmh3 -o $@
 
 # Compile all source files, but do not link. As a side effect, compile a dependency file for each source file.
 #
@@ -164,14 +166,6 @@ $(addprefix $(ASYNC_DEP_DIR),%.d): $(addprefix $(ASYNC_SRC_DIR),%.c)
 #
 -include $(DEPFILES) $(TEST_DEPFILES) $(BENCH_DEPFILES) $(ASYNC_DEPFILES)
 
-# Clean up files produced by the makefile. Any invocation should execute, regardless of file modification date, hence
-# dependency on FRC.
-#
 # target: clean - Remove all files produced by this makefile
-clean : FRC
+clean :
 	@rm -rf $(BIN_DIR) $(DEP_DIR) $(OBJ_DIR)
-
-# Special pseudo target which always needs to be recomputed. Forces full rebuild of target every time when used as a
-# component.
-FRC :
-

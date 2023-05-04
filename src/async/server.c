@@ -1,4 +1,6 @@
 #include "buffer.h"
+#include "client.h"
+#include "log.h"
 
 #include <getopt.h>
 #include <stdarg.h>
@@ -10,11 +12,9 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <urbit-ob.h>
 #include <uv.h>
 
-
-#define PATP_MAX 56
-#define PATP_FMT "%56s"
 
 #define DEFAULT_MAX_TRANSACTION_SIZE 1000000
 #define DEFAULT_CHUNK_SIZE 10000
@@ -28,73 +28,6 @@ const char *cluster_file_path = "/etc/foundationdb/fdb.cluster";
 #define container_of(ptr, type, member) \
   ((type *)((uint8_t *)(ptr) - offsetof(type, member)))
 #define STRINGIFY(x) #x
-
-typedef struct db_write_op {
-  enum {
-    E_START,
-    E_DATA,
-    E_END,
-  } type;
-  union {
-    struct {
-      uint64_t id;
-      size_t length;
-    } header;
-    struct {
-      size_t h, t;
-    } data;
-  } event;
-} db_write_op_t;
-
-// client state header, after which we put the buffers
-typedef struct client {
-  char patp[PATP_MAX + 1];
-
-  uint64_t highest_eid;
-
-  cb_t read_buf;
-  char ctl_buf[128];
-  char write_buf[16 * 1024];
-  cb_t db_write_ops;
-
-  struct {
-    uv_tcp_t tcp;
-    struct {
-      bool reading;
-      bool writing;
-    } open_for;
-    uv_write_t write_req;
-    uv_shutdown_t shutdown_req;
-  } uv;
-
-  enum {
-    START,
-    // handshake
-    HS_HELLO,
-    HS_POINT,
-    HS_FETCH_EID,
-    // idle
-    IDLE,
-    // save many
-    WM_HEADER,
-    WM_DATA,
-    // save
-    W_DATA,
-    // read flow
-    R_DATA,
-  } state, next_state;
-
-  union {
-    struct {
-      uint64_t n_events;
-      uint64_t start_id, end_id;
-    } save_many;
-    struct {
-      uint64_t start_id;
-      uint64_t limit;
-    } read;
-  } state_data;
-} client_t;
 
 static inline uv_handle_t *c_handle(client_t *client) {
   return (uv_handle_t *)&client->uv.tcp;
@@ -166,9 +99,9 @@ void c_on_close(uv_handle_t *handle) {
 }
 
 void c_on_shutdown(uv_shutdown_t *req, int status) {
-  if (status < 0)
-    fprintf(stderr, "shutdown failed: %s\n", uv_strerror(status));
   client_t *c = container_of(req, client_t, uv.shutdown_req);
+  if (status < 0)
+    warn(c, "shutdown failed: %s", uv_strerror(status));
   c->uv.open_for.writing = false;
   c_destroy_and_free_if_possible(c);
 }
@@ -176,7 +109,7 @@ void c_on_shutdown(uv_shutdown_t *req, int status) {
 void c_on_write(uv_write_t *req, int status) {
   client_t *c = container_of(req, client_t, uv.write_req);
   if (status < 0) {
-    fprintf(stderr, "write failed: %s\n", uv_strerror(status));
+    error(c, "write failed: %s", uv_strerror(status));
     c_terminate(c);
     return;
   }
@@ -203,7 +136,7 @@ bool c_process_ctl(client_t *c) {
       int16_t proto_version;
       if (sscanf(c->ctl_buf, "HELLO %hi\n", &proto_version) != 1
           || proto_version != 0) {
-        fprintf(stderr, "expected HELLO 0\n");
+        error(c, "expected HELLO 0");
         return false;
       }
       c->next_state = HS_POINT;
@@ -211,8 +144,12 @@ bool c_process_ctl(client_t *c) {
       break;
     }
     case HS_POINT: {
-      if (sscanf(c->ctl_buf, "POINT ~" PATP_FMT "\n", c->patp) != 1) {
-        fprintf(stderr, "expected POINT @p\n");
+      if (sscanf(c->ctl_buf, "POINT ~" PATP_FMT "\n", c->point.patp + 1) != 1) {
+        error(c, "expected POINT @p");
+        return false;
+      }
+      if (!patp2num(c->point.num, c->point.patp)) {
+        error(c, "invalid @p");
         return false;
       }
       c->next_state = HS_FETCH_EID;
@@ -223,7 +160,7 @@ bool c_process_ctl(client_t *c) {
       uint64_t x, y, z;
       if (sscanf(c->ctl_buf, "SAVE MANY %lu %lu %lu\n", &x, &y, &z) == 3) {
         if (y <= c->highest_eid || y >= z) {
-          fprintf(stderr, "invalid SAVE MANY\n");
+          error(c, "invalid SAVE MANY");
           return false;
         }
         c->state_data.save_many.n_events = x;
@@ -232,7 +169,7 @@ bool c_process_ctl(client_t *c) {
         c->next_state = WM_HEADER;
       } else if (sscanf(c->ctl_buf, "SAVE %lu %lu\n", &x, &y) == 2) {
         if (x <= c->highest_eid) {
-          fprintf(stderr, "invalid SAVE\n");
+          error(c, "invalid SAVE");
           return false;
         }
         c_event_start(c, x, y);
@@ -242,7 +179,7 @@ bool c_process_ctl(client_t *c) {
         c->state_data.read.limit = y;
         c->next_state = R_DATA;
       } else {
-        fprintf(stderr, "unexpected command\n");
+        error(c, "unexpected command");
         return false;
       }
       break;
@@ -251,7 +188,7 @@ bool c_process_ctl(client_t *c) {
       uint64_t x, y;
       if (sscanf(c->ctl_buf, "EVENT %lu %lu\n", &x, &y) != 2
           || x <= c->highest_eid) {
-        fprintf(stderr, "invalid EVENT\n");
+        error(c, "invalid EVENT");
         return false;
       }
       c_event_start(c, x, y);
@@ -259,7 +196,7 @@ bool c_process_ctl(client_t *c) {
       break;
     }
     default:
-      fprintf(stderr, "unexpected control state %d\n", c->state);
+      error(c, "unexpected control state %d", c->state);
       abort();
       break;
   }
@@ -286,7 +223,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 
   if (nread < 0) {
     if (nread != UV_EOF) {
-      fprintf(stderr, "client read failed: %s\n", uv_strerror(nread));
+      error(c, "client read failed: %s", uv_strerror(nread));
     }
     c_terminate(c);
     return;
@@ -305,7 +242,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
         c->ctl_buf[l++] = base[i++];
 
       if (l == ctl_buf_room) {
-        fprintf(stderr, "command too long\n");
+        error(c, "command too long");
         c_terminate(c);
         return;
       }
@@ -332,13 +269,13 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 
 void c_on_connect(uv_stream_t *server, int status) {
   if (status < 0) {
-    fprintf(stderr, "connection error: %s\n", uv_strerror(status));
+    error(NULL, "connection error: %s", uv_strerror(status));
     return;
   }
 
   client_t *c = malloc(sizeof(client_t));
   if (!c || !c_init(c)) {
-    fprintf(stderr, "alloc failure\n");
+    error(NULL, "alloc failure");
     free(c);
     uv_loop_close(loop);
     return;
@@ -347,7 +284,7 @@ void c_on_connect(uv_stream_t *server, int status) {
   uv_tcp_init(loop, &c->uv.tcp);
   status = uv_accept(server, c_stream(c));
   if (status < 0) {
-    fprintf(stderr, "accept error: %s\n", uv_strerror(status));
+    error(NULL, "accept error: %s", uv_strerror(status));
     c_terminate(c);
     return;
   }
@@ -386,12 +323,12 @@ int main(int argc, char *argv[]) {
   uv_ip4_addr("0.0.0.0", port, &addr);
   int r = uv_tcp_bind(&server, (const struct sockaddr *)&addr, 0);
   if (r) {
-    fprintf(stderr, "bind error: %s\n", uv_strerror(r));
+    error(NULL, "bind error: %s", uv_strerror(r));
     return EXIT_FAILURE;
   }
   r = uv_listen((uv_stream_t *)&server, 128, c_on_connect);
   if (r) {
-    fprintf(stderr, "listen error: %s\n", uv_strerror(r));
+    error(NULL, "listen error: %s", uv_strerror(r));
     return EXIT_FAILURE;
   }
 

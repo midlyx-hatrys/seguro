@@ -41,8 +41,11 @@
       };
       buildInputs = attrValues {
         inherit (pkgs)
+          gmp
           foundationdb71
           libuv
+          mmh3
+          urbit-cob
         ;
       }
       ++ [urbit-cob.packages.${pkgs.system}.default];
@@ -52,9 +55,12 @@
     systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin"];
 
     flake = {
-      overlays.default = pkgs: _: {
-        seguro = pkgs.stdenv.mkDerivation (pkgAttrs pkgs);
-      };
+      overlays.default = nixpkgs.lib.composeManyExtensions [
+        urbit-cob.overlays.default
+        (pkgs: _: {
+          seguro = pkgs.stdenv.mkDerivation (pkgAttrs pkgs);
+        })
+      ];
     };
 
     perSystem = { pkgs, system, ... }: {
