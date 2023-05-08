@@ -4,10 +4,11 @@
 
 CC := gcc
 CSTD := -std=gnu11
-DEV_CFLAGS := -Wall -Wextra -Wpedantic -Wformat=2 -Wno-unused-parameter \
+DEV_CFLAGS := -Wall -Wextra -Wformat=2 -Wno-unused-parameter \
              -Wshadow -Wwrite-strings -Wstrict-prototypes \
              -Wold-style-definition -Wredundant-decls -Wnested-externs \
-             -Wmissing-include-dirs -Og -g
+             -Wmissing-include-dirs \
+             -Og -g
 LINK_FLAGS := -lm -lfdb_c -lpthread
 
 FDB_VERSION := 710
@@ -87,7 +88,7 @@ test-unit : $(TEST_UNIT_CMD)
 #
 $(TEST_UNIT_CMD) : $(OBJECTS) $(addprefix $(TEST_OBJ_DIR),unit.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(addprefix $(TEST_OBJ_DIR),unit.o) $(OBJECTS) $(LINK_FLAGS) -o $@
+	$(CC) $^ $(LINK_FLAGS) -o $@
 
 # Run Seguro integration tests
 #
@@ -100,7 +101,7 @@ test-integ : $(TEST_INTEG_CMD)
 #
 $(TEST_INTEG_CMD) : $(OBJECTS) $(addprefix $(TEST_OBJ_DIR),integ.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(addprefix $(TEST_OBJ_DIR),integ.o) $(OBJECTS) $(LINK_FLAGS) -o $@
+	$(CC) $^ $(LINK_FLAGS) -o $@
 
 # Run Seguro benchmarks
 #
@@ -119,11 +120,11 @@ benchmark-write : $(BENCHMARK_WRITE_CMD)
 #
 $(BENCHMARK_WRITE_CMD) : $(OBJECTS) $(addprefix $(BENCH_OBJ_DIR),write.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(addprefix $(BENCH_OBJ_DIR),write.o) $(OBJECTS) $(LINK_FLAGS) -o $@
+	$(CC) $^ $(LINK_FLAGS) -o $@
 
 $(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o log.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o) $(OBJECTS) $(LINK_FLAGS) -lurbit-ob -luv -lgmp -lmmh3 -o $@
+	$(CC) $^ $(LINK_FLAGS) -lurbit-ob -luv -lgmp -lmmh3 -o $@
 
 # Compile all source files, but do not link. As a side effect, compile a dependency file for each source file.
 #
