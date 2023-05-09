@@ -122,7 +122,7 @@ $(BENCHMARK_WRITE_CMD) : $(OBJECTS) $(addprefix $(BENCH_OBJ_DIR),write.o)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $^ $(LINK_FLAGS) -o $@
 
-$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),server.o buffer.o log.o)
+$(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),main.o ship.o cb.o log.o)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $^ $(LINK_FLAGS) -lurbit-ob -luv -lgmp -lmmh3 -o $@
 

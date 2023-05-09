@@ -13,12 +13,12 @@ static size_t line_width = 100;
 
 static const char *level_str(log_level_t level) {
   switch (level) {
-    case LEVEL_fatal: return "F";
-    case LEVEL_error: return "E";
-    case LEVEL_warn: return "W";
-    case LEVEL_info: return "I";
-    case LEVEL_debug: return "D";
-    case LEVEL_trace: return "T";
+    case LEVEL_fatal: return "!!!";
+    case LEVEL_error: return "!";
+    case LEVEL_warn: return "?";
+    case LEVEL_info: return ":";
+    case LEVEL_debug: return "_";
+    case LEVEL_trace: return ".";
   }
   // can't happen
   abort();

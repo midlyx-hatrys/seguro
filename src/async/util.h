@@ -8,3 +8,6 @@
     _a op _b ? _a : b; })
 #define min(a, b) _minmax(a, b, <)
 #define max(a, b) _minmax(a, b, >)
+
+#define NAME_AND_COMMA(TOKEN) TOKEN ,
+#define STRING_AND_COMMA(TOKEN) #TOKEN ,

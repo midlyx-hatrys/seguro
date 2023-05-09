@@ -1,30 +1,114 @@
-#include "buffer.h"
-#include "client.h"
+#include "ship.h"
+
+#include "cb.h"
+#include "knob.h"
 #include "log.h"
 #include "util.h"
 
-#include <getopt.h>
-#include <stdarg.h>
+#include <gmp.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
-#include <unistd.h>
 #include <urbit-ob.h>
 #include <uv.h>
 
 
-#define DEFAULT_MAX_TRANSACTION_SIZE 1000000
-#define DEFAULT_CHUNK_SIZE 10000
+static uv_loop_t *g_loop;
 
-int port = 7000;
-size_t max_transaction_size = DEFAULT_MAX_TRANSACTION_SIZE;
-size_t buffer_size;
-size_t chunk_size = DEFAULT_CHUNK_SIZE;
-const char *cluster_file_path = "/etc/foundationdb/fdb.cluster";
+
+#define PATP_MAX 57
+#define PATP_FMT "%57s"
+
+typedef struct db_write_op {
+  enum {
+    E_START,
+    E_DATA,
+    E_END,
+  } type;
+  union {
+    struct {
+      uint64_t id;
+      size_t length;
+    } header;
+    struct {
+      size_t h;
+      size_t length;
+    } data;
+  } event;
+} db_write_op_t;
+
+#define READ_STATES(_)                         \
+       _(START)                                 \
+       _(HS_HELLO)                              \
+       _(HS_POINT)                              \
+       _(HS_FETCH_EID)                          \
+       _(IDLE)                                  \
+       _(WM_HEADER)                             \
+       _(WM_DATA)                               \
+       _(W_DATA)                                \
+       _(R_DATA)
+typedef enum {
+  READ_STATES(NAME_AND_COMMA)
+} read_state_t;
+extern const char *read_state_str[];
+
+// client state header, after which we put the buffers
+typedef struct client {
+  uintptr_t id;
+
+  struct {
+    mpz_t num;
+    char patp[PATP_MAX + 1];
+  } point;
+
+  uint64_t highest_eid;
+
+  cb_t read_buf;
+  char ctl_buf[128];
+  char write_buf[16 * 1024];
+  cb_t db_write_ops;
+
+  struct {
+    uv_tcp_t tcp;
+    struct {
+      bool reading;
+      bool writing;
+    } open_for;
+    uv_write_t write_req;
+    uv_shutdown_t shutdown_req;
+  } uv;
+
+  read_state_t state, next_state;
+
+  struct {
+    union {
+      struct {
+        uint64_t events_left;
+        uint64_t start_id, end_id;
+      } batch;
+      struct {
+        uint64_t start_id;
+        uint64_t limit;
+      } read;
+    } flow;
+    struct {
+      uint64_t id;
+      size_t left;
+    } event;
+  } data;
+
+  log_context_t ctx;
+} client_t;
+
+static inline __attribute__((used))
+uv_handle_t *c_handle(client_t *c) {
+  return (uv_handle_t *)&c->uv.tcp;
+}
+static inline __attribute__((used))
+uv_stream_t *c_stream(client_t *c) {
+  return (uv_stream_t *)&c->uv.tcp;
+}
 
 const char *read_state_str[] = {
   READ_STATES(STRING_AND_COMMA)
@@ -32,16 +116,9 @@ const char *read_state_str[] = {
 
 uintptr_t c_counter;
 
-static uv_handle_t *c_handle(client_t *client) {
-  return (uv_handle_t *)&client->uv.tcp;
-}
-static uv_stream_t *c_stream(client_t *client) {
-  return (uv_stream_t *)&client->uv.tcp;
-}
-
 static bool c_init(client_t *c);
 static void c_destroy(client_t *c);
-static void c_destroy_and_free_if_possible(client_t *c);
+static void c_gc(client_t *c);
 static void fc_terminate(const char *file, int line, const char *function,
                          client_t *c, const char *fmt, ...)
   __attribute__ ((format (printf, 5, 6)));
@@ -54,7 +131,7 @@ static void c_on_connect(client_t *c, uv_stream_t *server);
 static void c_on_close(uv_handle_t *handle);
 static void c_on_shutdown(uv_shutdown_t *req, int status);
 
-static void c_on_write(uv_write_t *req, int status);
+static void c_on_write_ctl(uv_write_t *req, int status);
 static void c_on_read_start(uv_handle_t *handle,
                             size_t suggested_size, uv_buf_t *buf);
 static void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf);
@@ -70,13 +147,20 @@ static void c_enq_op(client_t *c, const db_write_op_t *op);
 
 static void on_connect(uv_stream_t *server, int status);
 
-static uv_loop_t *loop;
+#define c_fatal(c, args...) fatal(&((c)->ctx), args)
+#define c_error(c, args...) error(&((c)->ctx), args)
+#define c_warn(c, args...) warn(&((c)->ctx), args)
+#define c_info(c, args...) info(&((c)->ctx), args)
+#define c_debug(c, args...) debug(&((c)->ctx), args)
+#define c_trace(c, args...) trace(&((c)->ctx), args)
+#define c_scope(c, args...) scope(&((c)->ctx), args)
+#define c_assert(cond, c, args...) log_assert(cond, &((c)->ctx), args)
 
 bool c_init(client_t *c) {
   memset(c, 0, sizeof(*c));
-  if (!cb_init(&c->read_buf, buffer_size, 1, false))
+  if (!cb_init(&c->read_buf, knob.read_buffer_size, 1, false))
     goto fail;
-  if (!cb_init(&c->db_write_ops, buffer_size / 128, sizeof(db_write_op_t), true))
+  if (!cb_init(&c->db_write_ops, knob.read_buffer_size / 128, sizeof(db_write_op_t), true))
     goto fail;
 
   c->ctx.out = c_log_out;
@@ -94,7 +178,7 @@ void c_destroy(client_t *c) {
   cb_destroy(&c->read_buf);
 }
 
-void c_destroy_and_free_if_possible(client_t *c) {
+void c_gc(client_t *c) {
   if (c->uv.open_for.reading || c->uv.open_for.writing)
     return;
   c_destroy(c);
@@ -122,58 +206,57 @@ void fc_terminate(const char *file, int line, const char *function,
     uv_shutdown(&c->uv.shutdown_req, c_stream(c), c_on_shutdown);
   if (c->uv.open_for.reading)
     uv_close(c_handle(c), c_on_close);
-  c_destroy_and_free_if_possible(c);
+  c_gc(c);
 }
 
 void c_on_close(uv_handle_t *handle) {
   client_t *c = container_of(handle, client_t, uv.tcp);
   c->uv.open_for.reading = false;
-  c_destroy_and_free_if_possible(c);
+  c_gc(c);
 }
 
 void c_on_shutdown(uv_shutdown_t *req, int status) {
   client_t *c = container_of(req, client_t, uv.shutdown_req);
   if (status < 0)
-    warn(&c->ctx, "shutdown failed: %s", uv_strerror(status));
+    c_warn(c, "shutdown failed: %s", uv_strerror(status));
   c->uv.open_for.writing = false;
-  c_destroy_and_free_if_possible(c);
+  c_gc(c);
 }
 
-void c_on_write(uv_write_t *req, int status) {
+void c_on_write_ctl(uv_write_t *req, int status) {
   client_t *c = container_of(req, client_t, uv.write_req);
   if (status < 0) {
-    c_terminate(c, "write failed: %s", uv_strerror(status));
+    c_terminate(c, "ctl write failed: %s", uv_strerror(status));
     return;
   }
 
-  if (c->state != W_DATA) {
-    c->state = c->next_state;
-    uv_read_start(c_stream(c), c_on_read_start, c_on_read);
-  }
+  c_assert(c->state != W_DATA, c, "must not be in a streaming state");
+  c->state = c->next_state;
+  uv_read_start(c_stream(c), c_on_read_start, c_on_read);
 }
 
 void c_write_ctl(client_t *c, const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   size_t len = vsnprintf(c->write_buf, sizeof c->write_buf - 2, fmt, args);
-  fatal_unless(len >= sizeof c->write_buf - 2,
-               NULL, "write buffer too small for control directives");
+  c_assert(len >= sizeof c->write_buf - 2, c,
+           "write buffer too small for control directives");
   c->write_buf[len] = '\n';
   c->write_buf[len + 1] = '\0';
   va_end(args);
 
   uv_buf_t buf = uv_buf_init(c->write_buf, len + 2);
-  uv_write(&c->uv.write_req, c_stream(c), &buf, 1, c_on_write);
+  uv_write(&c->uv.write_req, c_stream(c), &buf, 1, c_on_write_ctl);
 }
 
 bool c_process_ctl(client_t *c) {
-  scope(&c->ctx, NULL, "%s, %s", read_state_str[c->state], c->ctl_buf);
+  c_scope(c, NULL, "%s, %s", read_state_str[c->state], c->ctl_buf);
   switch (c->state) {
     case HS_HELLO: {
       int16_t proto_version;
       if (sscanf(c->ctl_buf, "HELLO %hi\n", &proto_version) != 1
           || proto_version != 0) {
-        error(&c->ctx, "expected HELLO 0");
+        c_error(c, "expected HELLO 0");
         return false;
       }
       c->next_state = HS_POINT;
@@ -182,12 +265,12 @@ bool c_process_ctl(client_t *c) {
     }
     case HS_POINT: {
       if (sscanf(c->ctl_buf, "POINT ~" PATP_FMT "\n", c->point.patp + 1) != 1) {
-        error(&c->ctx, "expected POINT @p");
+        c_error(c, "expected POINT @p");
         return false;
       }
       c->point.patp[0] = '~';
       if (!patp2num(c->point.num, c->point.patp)) {
-        error(&c->ctx, "invalid @p");
+        c_error(c, "invalid @p");
         return false;
       }
       c->next_state = HS_FETCH_EID;
@@ -198,7 +281,7 @@ bool c_process_ctl(client_t *c) {
       uint64_t x, y, z;
       if (sscanf(c->ctl_buf, "SAVE MANY %lu %lu %lu\n", &x, &y, &z) == 3) {
         if (y <= c->highest_eid || y >= z) {
-          error(&c->ctx, "invalid SAVE MANY");
+          c_error(c, "invalid SAVE MANY");
           return false;
         }
         c->data.flow.batch.events_left = x;
@@ -207,7 +290,7 @@ bool c_process_ctl(client_t *c) {
         c->next_state = WM_HEADER;
       } else if (sscanf(c->ctl_buf, "SAVE %lu %lu\n", &x, &y) == 2) {
         if (x <= c->highest_eid) {
-          error(&c->ctx, "invalid SAVE");
+          c_error(c, "invalid SAVE");
           return false;
         }
         c_event_start(c, x, y);
@@ -217,7 +300,7 @@ bool c_process_ctl(client_t *c) {
         c->data.flow.read.limit = y;
         c->next_state = R_DATA;
       } else {
-        error(&c->ctx, "unexpected command");
+        c_error(c, "unexpected command");
         return false;
       }
       break;
@@ -226,7 +309,7 @@ bool c_process_ctl(client_t *c) {
       uint64_t x, y;
       if (sscanf(c->ctl_buf, "EVENT %lu %lu\n", &x, &y) != 2
           || x <= c->highest_eid) {
-        error(&c->ctx, "invalid EVENT");
+        c_error(c, "invalid EVENT");
         return false;
       }
       c_event_start(c, x, y);
@@ -268,7 +351,7 @@ void c_on_read_start(uv_handle_t *handle,
 
 void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   client_t *c = container_of(stream, client_t, uv.tcp);
-  scope(&c->ctx, NULL, "%ld, %lu", nread, buf->base - (char *)c->read_buf.b);
+  c_scope(c, NULL, "%ld, %lu", nread, buf->base - (char *)c->read_buf.b);
 
   if (nread < 0) {
     if (nread != UV_EOF)
@@ -277,9 +360,13 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       c_terminate(c, NULL);
     return;
   }
+  if (nread == 0) {
+    // EAGAIN, EWOULDBLOCK
+    return;
+  }
 
   if (c->state == R_DATA) {
-    c_terminate(c, "client is not supposed to talk now");
+    c_terminate(c, "client is not supposed to talk now, we are streaming to it");
     return;
   }
 
@@ -287,7 +374,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   size_t left = (size_t)nread;
 
   while (left) {
-    debug(&c->ctx, "state=%s, left=%lu", read_state_str[c->state], left);
+    c_debug(c, "state=%s, left=%lu", read_state_str[c->state], left);
 
     if (c->state != W_DATA && c->state != WM_DATA) {
       const size_t ctl_buf_room = sizeof c->ctl_buf - 2;
@@ -335,7 +422,9 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       if (c->state == W_DATA) {
         c->state = IDLE;
       } else {
-        fatal_unless(c->state == WM_DATA, &c->ctx, "unexpected state: %s", read_state_str[c->state]);
+        c_assert(c->state == WM_DATA, c,
+                 "unexpected state: %s", read_state_str[c->state]);
+
 
       }
 
@@ -352,15 +441,15 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 }
 
 void c_on_connect(client_t *c, uv_stream_t *server) {
-  scope(&c->ctx, NULL, NULL);
-  uv_tcp_init(loop, &c->uv.tcp);
+  c_scope(c, NULL, NULL);
+  uv_tcp_init(g_loop, &c->uv.tcp);
   int status = uv_accept(server, c_stream(c));
   if (status < 0) {
     c_terminate(c, "accept error: %s", uv_strerror(status));
     return;
   }
 
-  debug(&c->ctx, "accepted");
+  c_debug(c, "accepted");
   c->uv.open_for.reading = c->uv.open_for.writing = true;
 
   c->state = START;
@@ -368,7 +457,7 @@ void c_on_connect(client_t *c, uv_stream_t *server) {
   c_write_ctl(c, "SEGURO 0");
 }
 
-void on_connect(uv_stream_t *server, int status) {
+static void on_connect(uv_stream_t *server, int status) {
   scope(NULL, NULL, "status=%d", status);
   if (status < 0) {
     error(NULL, "connection error: %s", uv_strerror(status));
@@ -379,48 +468,30 @@ void on_connect(uv_stream_t *server, int status) {
   if (!c || !c_init(c)) {
     error(NULL, "alloc failure");
     free(c);
-    uv_loop_close(loop);
+    uv_loop_close(g_loop);
     return;
   }
 
   c_on_connect(c, server);
 }
 
-int main(int argc, char *argv[]) {
-  int opt;
-  while ((opt = getopt(argc, argv, "p:t:c:f:")) != -1) {
-    switch (opt) {
-      case 'p':
-        port = atoi(optarg);
-        break;
-      case 'c':
-        chunk_size = strtoul(optarg, NULL, 0);
-        break;
-      case 't':
-        max_transaction_size = strtoul(optarg, NULL, 0);
-        break;
-      case 'f':
-        cluster_file_path = strdup(optarg);
-        break;
-    }
-  }
-  buffer_size = max_transaction_size * 2;
+bool ship_server_init(uv_loop_t *loop, int port) {
+  g_loop = loop;
 
-  loop = uv_default_loop();
   uv_tcp_t server;
   struct sockaddr_in addr;
-  uv_tcp_init(loop, &server);
+  uv_tcp_init(g_loop, &server);
   uv_ip4_addr("0.0.0.0", port, &addr);
   int r = uv_tcp_bind(&server, (const struct sockaddr *)&addr, 0);
   if (r) {
     error(NULL, "bind error: %s", uv_strerror(r));
-    return EXIT_FAILURE;
+    return false;
   }
   r = uv_listen((uv_stream_t *)&server, 128, on_connect);
   if (r) {
     error(NULL, "listen error: %s", uv_strerror(r));
-    return EXIT_FAILURE;
+    return false;
   }
 
-  return uv_run(loop, UV_RUN_DEFAULT);
+  return true;
 }
