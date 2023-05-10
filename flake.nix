@@ -41,6 +41,7 @@
       };
       buildInputs = attrValues {
         inherit (pkgs)
+          argtable
           gmp
           foundationdb71
           libuv

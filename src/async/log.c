@@ -35,15 +35,18 @@ static const char *pretty_fname(const char *fname) {
 }
 
 static size_t prefix(log_level_t level, log_context_t *ctx) {
-  size_t ret = fprintf(stderr, "[%s ", level_str(level));
-  ret += ctx->out(ctx, stderr);
-  ret += fprintf(stderr, "]%*s ", (int)indentation, "");
+  size_t ret = fprintf(stderr, "%s", level_str(level));
+  if (ctx) {
+    ret += fprintf(stderr, " ");
+    ret += ctx->out(ctx, stderr);
+  }
+  ret += fprintf(stderr, "%*s ", (int)indentation, "");
   return ret;
 }
 
 static void suffix(size_t length,
                    const char *file, size_t line, const char *function) {
-  fprintf(stderr, "%*s|%s():%s:%lu\n",
+  fprintf(stderr, "%*s |%s():%s:%lu\n",
           (int)(length > line_width ? 0 : line_width - length), "",
           function, pretty_fname(file), line);
 }

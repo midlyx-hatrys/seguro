@@ -124,7 +124,7 @@ $(BENCHMARK_WRITE_CMD) : $(OBJECTS) $(addprefix $(BENCH_OBJ_DIR),write.o)
 
 $(ASYNC_CMD): $(OBJECTS) $(addprefix $(ASYNC_OBJ_DIR),main.o ship.o cb.o log.o)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $^ $(LINK_FLAGS) -lurbit-ob -luv -lgmp -lmmh3 -o $@
+	$(CC) $^ $(LINK_FLAGS) -lurbit-ob -luv -lgmp -lmmh3 -largtable3 -o $@
 
 # Compile all source files, but do not link. As a side effect, compile a dependency file for each source file.
 #

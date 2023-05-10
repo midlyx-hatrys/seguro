@@ -20,6 +20,34 @@ static uv_loop_t *g_loop;
 #define PATP_MAX 57
 #define PATP_FMT "%57s"
 
+#define PROTO_STATES(_)                         \
+       _(START)                                 \
+       _(HS_HELLO)                              \
+       _(HS_POINT)                              \
+       _(HS_FETCH_EID)                          \
+       _(IDLE)                                  \
+       _(WM_HEADER)                             \
+       _(WM_DATA)                               \
+       _(W_DATA)                                \
+       _(R_DATA)
+typedef enum {
+  PROTO_STATES(NAME_AND_COMMA)
+} proto_state_t;
+static const char *proto_state_str[] = {
+  PROTO_STATES(STRING_AND_COMMA)
+};
+
+#define READ_MODES(_)                           \
+       _(COMMAND)                               \
+       _(DATA)                                  \
+       _(NONE)
+typedef enum {
+  READ_MODES(NAME_AND_COMMA)
+} read_mode_t;
+static const char *read_mode_str[] = {
+  READ_MODES(STRING_AND_COMMA)
+};
+
 typedef struct db_write_op {
   enum {
     E_START,
@@ -38,27 +66,11 @@ typedef struct db_write_op {
   } event;
 } db_write_op_t;
 
-#define READ_STATES(_)                         \
-       _(START)                                 \
-       _(HS_HELLO)                              \
-       _(HS_POINT)                              \
-       _(HS_FETCH_EID)                          \
-       _(IDLE)                                  \
-       _(WM_HEADER)                             \
-       _(WM_DATA)                               \
-       _(W_DATA)                                \
-       _(R_DATA)
-typedef enum {
-  READ_STATES(NAME_AND_COMMA)
-} read_state_t;
-extern const char *read_state_str[];
-
-// client state header, after which we put the buffers
 typedef struct client {
-  uintptr_t id;
+  uint64_t id;
 
   struct {
-    mpz_t num;
+    __uint128_t num;
     char patp[PATP_MAX + 1];
   } point;
 
@@ -79,7 +91,8 @@ typedef struct client {
     uv_shutdown_t shutdown_req;
   } uv;
 
-  read_state_t state, next_state;
+  proto_state_t state, next_state;
+  read_mode_t read_state;
 
   struct {
     union {
@@ -110,11 +123,7 @@ uv_stream_t *c_stream(client_t *c) {
   return (uv_stream_t *)&c->uv.tcp;
 }
 
-const char *read_state_str[] = {
-  READ_STATES(STRING_AND_COMMA)
-};
-
-uintptr_t c_counter;
+uint64_t c_counter;
 
 static bool c_init(client_t *c);
 static void c_destroy(client_t *c);
@@ -154,7 +163,7 @@ static void on_connect(uv_stream_t *server, int status);
 #define c_debug(c, args...) debug(&((c)->ctx), args)
 #define c_trace(c, args...) trace(&((c)->ctx), args)
 #define c_scope(c, args...) scope(&((c)->ctx), args)
-#define c_assert(cond, c, args...) log_assert(cond, &((c)->ctx), args)
+#define c_assert(c, cond) log_assert(&((c)->ctx), cond)
 
 bool c_init(client_t *c) {
   memset(c, 0, sizeof(*c));
@@ -230,7 +239,7 @@ void c_on_write_ctl(uv_write_t *req, int status) {
     return;
   }
 
-  c_assert(c->state != W_DATA, c, "must not be in a streaming state");
+  c_assert(c, c->state != W_DATA);
   c->state = c->next_state;
   uv_read_start(c_stream(c), c_on_read_start, c_on_read);
 }
@@ -239,8 +248,7 @@ void c_write_ctl(client_t *c, const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   size_t len = vsnprintf(c->write_buf, sizeof c->write_buf - 2, fmt, args);
-  c_assert(len >= sizeof c->write_buf - 2, c,
-           "write buffer too small for control directives");
+  c_assert(c, len >= sizeof c->write_buf - 2);
   c->write_buf[len] = '\n';
   c->write_buf[len + 1] = '\0';
   va_end(args);
@@ -250,74 +258,105 @@ void c_write_ctl(client_t *c, const char *fmt, ...) {
 }
 
 bool c_process_ctl(client_t *c) {
-  c_scope(c, NULL, "%s, %s", read_state_str[c->state], c->ctl_buf);
+  c_scope(c, NULL, "%s, %s", proto_state_str[c->state], c->ctl_buf);
+  c_assert(c, c->read_state == COMMAND);
+  int n_read;
+  int length = strlen(c->ctl_buf);
   switch (c->state) {
     case HS_HELLO: {
       int16_t proto_version;
-      if (sscanf(c->ctl_buf, "HELLO %hi\n", &proto_version) != 1
+      if (sscanf(c->ctl_buf, "HELLO %hi%n", &proto_version, &n_read) != 1
+          || n_read != length
           || proto_version != 0) {
-        c_error(c, "expected HELLO 0");
+        c_error(c, "expected: HELLO 0");
         return false;
       }
+      c->read_state = NONE;
       c->next_state = HS_POINT;
       c_write_ctl(c, "IDENTIFY 0");
       break;
     }
     case HS_POINT: {
-      if (sscanf(c->ctl_buf, "POINT ~" PATP_FMT "\n", c->point.patp + 1) != 1) {
-        c_error(c, "expected POINT @p");
+      if (sscanf(c->ctl_buf, "POINT ~" PATP_FMT "%n",
+                 &c->point.patp[1], &n_read) != 1
+          || n_read != length) {
+        c_error(c, "expected: POINT @p");
         return false;
       }
       c->point.patp[0] = '~';
-      if (!patp2num(c->point.num, c->point.patp)) {
+      mpz_t pat; mpz_init(pat);
+      if (!patp2num(pat, c->point.patp)) {
         c_error(c, "invalid @p");
         return false;
       }
+      size_t i;
+      for (i = 0; i < 16 / sizeof(unsigned long); i++) {
+        __uint128_t n = (__uint128_t)mpz_get_ui(pat);
+        n <<= i * 8 * sizeof(unsigned long);
+        c->point.num |= n;
+        mpz_tdiv_q_2exp(pat, pat, 8 * sizeof(unsigned long));
+      }
+      if (mpz_cmp_ui(pat, 0L) != 0) {
+        c_error(c, "%s is too big for a point", c->point.patp);
+        return false;
+      }
+      c->read_state = NONE;
       c->next_state = HS_FETCH_EID;
       c_fetch_eid(c);
       break;
     }
     case IDLE: {
       uint64_t x, y, z;
-      if (sscanf(c->ctl_buf, "SAVE MANY %lu %lu %lu\n", &x, &y, &z) == 3) {
+      if (sscanf(c->ctl_buf, "WRITE BATCH %lu %lu %lu%n",
+                 &x, &y, &z, &n_read) == 3
+          || n_read == length) {
         if (y <= c->highest_eid || y >= z) {
-          c_error(c, "invalid SAVE MANY");
+          c_error(c, "malformed WRITE BATCH");
           return false;
         }
         c->data.flow.batch.events_left = x;
         c->data.flow.batch.start_id = y;
         c->data.flow.batch.end_id = z;
+        c->read_state = COMMAND;
         c->next_state = WM_HEADER;
-      } else if (sscanf(c->ctl_buf, "SAVE %lu %lu\n", &x, &y) == 2) {
+      } else if (sscanf(c->ctl_buf, "WRITE %lu %lu%n",
+                        &x, &y, &n_read) == 2
+                 || n_read == length) {
         if (x <= c->highest_eid) {
-          c_error(c, "invalid SAVE");
+          c_error(c, "malformed WRITE");
           return false;
         }
         c_event_start(c, x, y);
+        c->read_state = DATA;
         c->next_state = W_DATA;
-      } else if (sscanf(c->ctl_buf, "READ %lu %lu\n", &x, &y) == 2) {
+      } else if (sscanf(c->ctl_buf, "READ %lu %lu%n",
+                        &x, &y, &n_read) == 2
+                 && n_read == length) {
         c->data.flow.read.start_id = x;
         c->data.flow.read.limit = y;
+        c->read_state = NONE;
         c->next_state = R_DATA;
       } else {
-        c_error(c, "unexpected command");
+        c_error(c, "unexpected directive: %s", c->ctl_buf);
         return false;
       }
       break;
     }
     case WM_HEADER: {
       uint64_t x, y;
-      if (sscanf(c->ctl_buf, "EVENT %lu %lu\n", &x, &y) != 2
+      if (sscanf(c->ctl_buf, "EVENT %lu %lu%n", &x, &y, &n_read) != 2
+          || n_read != length
           || x <= c->highest_eid) {
-        c_error(c, "invalid EVENT");
+        c_error(c, "malformed EVENT");
         return false;
       }
       c_event_start(c, x, y);
+      c->read_state = DATA;
       c->next_state = WM_DATA;
       break;
     }
     default:
-      fatal(&c->ctx, "unexpected control state %s", read_state_str[c->state]);
+      fatal(&c->ctx, "unexpected control state %s", proto_state_str[c->state]);
       break;
   }
 
@@ -335,10 +374,13 @@ void c_enq_op(client_t *c, const db_write_op_t *op) {
 }
 
 void c_event_start(client_t *c, uint64_t id, uint64_t length) {
-  db_write_op_t op;
-  op.type = E_START;
-  op.event.header.id = id;
-  op.event.header.length = length;
+  db_write_op_t op = {
+    .type = E_START,
+    .event.header = {
+      .id = id,
+      .length = length
+    }
+  };
   c_enq_op(c, &op);
 }
 
@@ -351,13 +393,17 @@ void c_on_read_start(uv_handle_t *handle,
 
 void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   client_t *c = container_of(stream, client_t, uv.tcp);
-  c_scope(c, NULL, "%ld, %lu", nread, buf->base - (char *)c->read_buf.b);
+  c_scope(c, NULL, "%s:%s, %ld, %lu",
+          proto_state_str[c->state], read_mode_str[c->read_state],
+          nread, buf->base - (char *)c->read_buf.b);
 
   if (nread < 0) {
     if (nread != UV_EOF)
       c_terminate(c, "client read failed: %s", uv_strerror(nread));
-    else
+    else {
+      c_debug(c, "EOF");
       c_terminate(c, NULL);
+    }
     return;
   }
   if (nread == 0) {
@@ -365,40 +411,39 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     return;
   }
 
-  if (c->state == R_DATA) {
-    c_terminate(c, "client is not supposed to talk now, we are streaming to it");
-    return;
-  }
-
   char *base = buf->base;
   size_t left = (size_t)nread;
-
   while (left) {
-    c_debug(c, "state=%s, left=%lu", read_state_str[c->state], left);
+    c_debug(c, "%s:%s, %lu",
+            proto_state_str[c->state], read_mode_str[c->read_state],
+            left);
 
-    if (c->state != W_DATA && c->state != WM_DATA) {
-      const size_t ctl_buf_room = sizeof c->ctl_buf - 2;
-      // control content, append to buffer up to and including \n
+    if (c->read_state == NONE) {
+      c_terminate(c, "client may not talk now");
+      return;
+    }
+
+    if (c->read_state == COMMAND) {
+      // leave space for '\0'
+      const size_t ctl_buf_room = sizeof c->ctl_buf - 1;
+      // control content, append to buffer up to '\0'
       size_t l = strlen(c->ctl_buf);
-      // leave space for '\n\0'
       size_t i = 0;
-      while (l < ctl_buf_room && i < left && base[i] != '\n')
+      while (l < ctl_buf_room && i < left && base[i])
         c->ctl_buf[l++] = base[i++];
 
-      if (l == ctl_buf_room && base[i] != '\n') {
-        c_terminate(c, "command too long");
+      if (l == ctl_buf_room && base[i]) {
+        c_terminate(c, "directive too long");
         return;
       }
 
-      if (base[i] == '\n') {
-        // consume the '\n'
+      if (!base[i]) {
+        // consume the '\0'
         c->ctl_buf[l++] = base[i++];
-        c->ctl_buf[l] = '\0';
         if (!c_process_ctl(c)) {
           c_terminate(c, NULL);
           return;
         }
-        c->ctl_buf[0] = '\0';
       }
 
       left -= i;
@@ -406,10 +451,14 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       continue;
     }
 
-    db_write_op_t op;
-    op.type = E_DATA;
-    op.event.data.h = base - buf->base;
-    op.event.data.length = min(left, c->data.event.left);
+    // DATA
+    db_write_op_t op = {
+      .type = E_DATA,
+      .event.data = {
+        .h = base - buf->base,
+        .length = min(left, c->data.event.left)
+      }
+    };
     c_enq_op(c, &op);
 
     if (left >= op.event.data.length + 2) {
@@ -422,8 +471,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       if (c->state == W_DATA) {
         c->state = IDLE;
       } else {
-        c_assert(c->state == WM_DATA, c,
-                 "unexpected state: %s", read_state_str[c->state]);
+        c_assert(c, c->state == WM_DATA);
 
 
       }

@@ -56,8 +56,8 @@ void flog_with_level(const char *file, size_t line, const char *function,
 #define trace(c, fmt...) log_with_level(LEVEL_trace, c, fmt)
 
 // like assert() but never compiled out and using our formatter
-#define log_assert(cond, c, fmt...)          \
-  do { if (!(cond)) fatal(c, fmt); } while (0)
+#define log_assert(c, cond)                                             \
+  do { if (!(cond)) fatal(c, "assertion failed: " #cond); } while (0)
 
 void scope_enter(scope_t *scope, const char *name,
                  const char *file, size_t line, const char *function,
