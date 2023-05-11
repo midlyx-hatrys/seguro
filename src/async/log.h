@@ -48,16 +48,16 @@ void flog_with_level(const char *file, size_t line, const char *function,
 #define log_with_level(level, c, fmt...) \
   flog_with_level(__FILE__, __LINE__, __func__, level, c, fmt)
 
-#define fatal(c, fmt...) log_with_level(LEVEL_fatal, c, fmt)
-#define error(c, fmt...) log_with_level(LEVEL_error, c, fmt)
-#define warn(c, fmt...) log_with_level(LEVEL_warn, c, fmt)
-#define info(c, fmt...) log_with_level(LEVEL_info, c, fmt)
-#define debug(c, fmt...) log_with_level(LEVEL_debug, c, fmt)
-#define trace(c, fmt...) log_with_level(LEVEL_trace, c, fmt)
+#define log_fatal(c, fmt...) log_with_level(LEVEL_fatal, c, fmt)
+#define log_error(c, fmt...) log_with_level(LEVEL_error, c, fmt)
+#define log_warn(c, fmt...) log_with_level(LEVEL_warn, c, fmt)
+#define log_info(c, fmt...) log_with_level(LEVEL_info, c, fmt)
+#define log_debug(c, fmt...) log_with_level(LEVEL_debug, c, fmt)
+#define log_trace(c, fmt...) log_with_level(LEVEL_trace, c, fmt)
 
 // like assert() but never compiled out and using our formatter
 #define log_assert(c, cond)                                             \
-  do { if (!(cond)) fatal(c, "assertion failed: " #cond); } while (0)
+  do { if (!(cond)) log_fatal(c, "assertion failed: " #cond); } while (0)
 
 void scope_enter(scope_t *scope, const char *name,
                  const char *file, size_t line, const char *function,
@@ -65,6 +65,19 @@ void scope_enter(scope_t *scope, const char *name,
   __attribute__((format(printf, 7, 8)));
 void scope_exit(scope_t *scope);
 
-#define scope(c, name, fmt...)                                          \
+#define log_scope(c, name, fmt...)                                      \
   __attribute__((cleanup(scope_exit))) scope_t _scope;                  \
   scope_enter(&_scope, name, __FILE__, __LINE__, __func__, c, fmt);
+
+#define g_fatal(fmt...) log_fatal(NULL, fmt)
+#define g_error(fmt...) log_error(NULL, fmt)
+#define g_warn(fmt...) log_warn(NULL, fmt)
+#define g_info(fmt...) log_info(NULL, fmt)
+#define g_debug(fmt...) log_debug(NULL, fmt)
+#define g_trace(fmt...) log_trace(NULL, fmt)
+
+#define g_assert(cond) log_assert(NULL, cond)
+
+#define g_scope(name, fmt...) log_scope(NULL, name, fmt)
+#define g_scope_f(fmt...) log_scope(NULL, NULL, fmt)
+#define g_trace_f() log_scope(NULL, NULL, NULL)

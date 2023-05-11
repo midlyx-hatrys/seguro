@@ -131,8 +131,9 @@ static void c_gc(client_t *c);
 static void fc_terminate(const char *file, int line, const char *function,
                          client_t *c, const char *fmt, ...)
   __attribute__ ((format (printf, 5, 6)));
-#define c_terminate(c, fmt...) \
+#define c_terminate_msg(c, fmt...) \
   fc_terminate(__FILE__, __LINE__, __func__, c, fmt)
+#define c_terminate(c) c_terminate_msg(c, NULL)
 
 static size_t c_log_out(const log_context_t *c, FILE *stream);
 
@@ -156,13 +157,15 @@ static void c_enq_op(client_t *c, const db_write_op_t *op);
 
 static void on_connect(uv_stream_t *server, int status);
 
-#define c_fatal(c, args...) fatal(&((c)->ctx), args)
-#define c_error(c, args...) error(&((c)->ctx), args)
-#define c_warn(c, args...) warn(&((c)->ctx), args)
-#define c_info(c, args...) info(&((c)->ctx), args)
-#define c_debug(c, args...) debug(&((c)->ctx), args)
-#define c_trace(c, args...) trace(&((c)->ctx), args)
-#define c_scope(c, args...) scope(&((c)->ctx), args)
+#define c_fatal(c, args...) log_fatal(&((c)->ctx), args)
+#define c_error(c, args...) log_error(&((c)->ctx), args)
+#define c_warn(c, args...) log_warn(&((c)->ctx), args)
+#define c_info(c, args...) log_info(&((c)->ctx), args)
+#define c_debug(c, args...) log_debug(&((c)->ctx), args)
+#define c_trace(c, args...) log_trace(&((c)->ctx), args)
+#define c_scope(c, args...) log_scope(&((c)->ctx), args)
+#define c_scope_f(c, fmt...) log_scope(&((c)->ctx), NULL, fmt)
+#define c_trace_f(c) log_scope(&((c)->ctx), NULL, NULL)
 #define c_assert(c, cond) log_assert(&((c)->ctx), cond)
 
 bool c_init(client_t *c) {
@@ -235,7 +238,7 @@ void c_on_shutdown(uv_shutdown_t *req, int status) {
 void c_on_write_ctl(uv_write_t *req, int status) {
   client_t *c = container_of(req, client_t, uv.write_req);
   if (status < 0) {
-    c_terminate(c, "ctl write failed: %s", uv_strerror(status));
+    c_terminate_msg(c, "ctl write failed: %s", uv_strerror(status));
     return;
   }
 
@@ -258,7 +261,7 @@ void c_write_ctl(client_t *c, const char *fmt, ...) {
 }
 
 bool c_process_ctl(client_t *c) {
-  c_scope(c, NULL, "%s, %s", proto_state_str[c->state], c->ctl_buf);
+  c_scope_f(c, "%s, %s", proto_state_str[c->state], c->ctl_buf);
   c_assert(c, c->read_state == COMMAND);
   int n_read;
   int length = strlen(c->ctl_buf);
@@ -356,7 +359,7 @@ bool c_process_ctl(client_t *c) {
       break;
     }
     default:
-      fatal(&c->ctx, "unexpected control state %s", proto_state_str[c->state]);
+      log_fatal(&c->ctx, "unexpected control state %s", proto_state_str[c->state]);
       break;
   }
 
@@ -393,16 +396,16 @@ void c_on_read_start(uv_handle_t *handle,
 
 void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   client_t *c = container_of(stream, client_t, uv.tcp);
-  c_scope(c, NULL, "%s:%s, %ld, %lu",
-          proto_state_str[c->state], read_mode_str[c->read_state],
-          nread, buf->base - (char *)c->read_buf.b);
+  c_scope_f(c, "%s:%s, %ld, %lu",
+            proto_state_str[c->state], read_mode_str[c->read_state],
+            nread, buf->base - (char *)c->read_buf.b);
 
   if (nread < 0) {
     if (nread != UV_EOF)
-      c_terminate(c, "client read failed: %s", uv_strerror(nread));
+      c_terminate_msg(c, "client read failed: %s", uv_strerror(nread));
     else {
       c_debug(c, "EOF");
-      c_terminate(c, NULL);
+      c_terminate(c);
     }
     return;
   }
@@ -419,7 +422,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
             left);
 
     if (c->read_state == NONE) {
-      c_terminate(c, "client may not talk now");
+      c_terminate_msg(c, "client may not talk now");
       return;
     }
 
@@ -433,7 +436,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
         c->ctl_buf[l++] = base[i++];
 
       if (l == ctl_buf_room && base[i]) {
-        c_terminate(c, "directive too long");
+        c_terminate_msg(c, "directive too long");
         return;
       }
 
@@ -441,7 +444,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
         // consume the '\0'
         c->ctl_buf[l++] = base[i++];
         if (!c_process_ctl(c)) {
-          c_terminate(c, NULL);
+          c_terminate(c);
           return;
         }
       }
@@ -464,7 +467,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     if (left >= op.event.data.length + 2) {
       if (base[c->data.event.left + 1] != '\n'
           || base[c->data.event.left + 2] != '\n') {
-        c_terminate(c, "event %lu: bad bracketing", c->data.event.id);
+        c_terminate_msg(c, "event %lu: bad bracketing", c->data.event.id);
         return;
       }
 
@@ -489,11 +492,11 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 }
 
 void c_on_connect(client_t *c, uv_stream_t *server) {
-  c_scope(c, NULL, NULL);
+  c_trace_f(c);
   uv_tcp_init(g_loop, &c->uv.tcp);
   int status = uv_accept(server, c_stream(c));
   if (status < 0) {
-    c_terminate(c, "accept error: %s", uv_strerror(status));
+    c_terminate_msg(c, "accept error: %s", uv_strerror(status));
     return;
   }
 
@@ -506,15 +509,15 @@ void c_on_connect(client_t *c, uv_stream_t *server) {
 }
 
 static void on_connect(uv_stream_t *server, int status) {
-  scope(NULL, NULL, "status=%d", status);
+  g_scope_f("status=%d", status);
   if (status < 0) {
-    error(NULL, "connection error: %s", uv_strerror(status));
+    g_error("connection error: %s", uv_strerror(status));
     return;
   }
 
   client_t *c = malloc(sizeof(client_t));
   if (!c || !c_init(c)) {
-    error(NULL, "alloc failure");
+    g_error("alloc failure");
     free(c);
     uv_loop_close(g_loop);
     return;
@@ -532,12 +535,12 @@ bool ship_server_init(uv_loop_t *loop, int port) {
   uv_ip4_addr("0.0.0.0", port, &addr);
   int r = uv_tcp_bind(&server, (const struct sockaddr *)&addr, 0);
   if (r) {
-    error(NULL, "bind error: %s", uv_strerror(r));
+    g_error("bind error: %s", uv_strerror(r));
     return false;
   }
   r = uv_listen((uv_stream_t *)&server, 128, on_connect);
   if (r) {
-    error(NULL, "listen error: %s", uv_strerror(r));
+    g_error("listen error: %s", uv_strerror(r));
     return false;
   }
 
