@@ -22,6 +22,7 @@ struct arg_int *port;
 struct arg_file *cluster;
 struct arg_int *chunk_size, *tx_size, *btxs;
 struct arg_lit *help, *verbosity;
+struct arg_int *log_width;
 struct arg_end *end;
 
 knobs_t knob = {
@@ -34,6 +35,7 @@ int main(int argc, char *argv[]) {
   void *argt[] = {
     help = arg_litn("h", "help", 0, 1, "display this help and exit"),
     verbosity = arg_litn("v", "verbose", 0, LEVEL_trace - log_level, "log verbosity"),
+    log_width = arg_int0("w", "log-width", "<n>", "log message width"),
     port = arg_int0("p", "port", "<port>", "TCP port to listen on"),
     cluster = arg_file0("d", "db-cluster", "<path>", "FDB cluster file"),
     chunk_size = arg_int0("c", "chunk-size", "<n>", "max chunk size"),
@@ -45,6 +47,7 @@ int main(int argc, char *argv[]) {
   port->ival[0] = DEFAULT_PORT;
   cluster->filename[0] = DEFAULT_CLUSTER;
   btxs->ival[0] = DEFAULT_TX_BUFFERING;
+  log_width->ival[0] = (int)log_payload_width;
 
   int n_errors = arg_parse(argc, argv, argt);
 
@@ -61,6 +64,8 @@ int main(int argc, char *argv[]) {
   }
 
   log_level += verbosity->count;
+  log_payload_width = log_width->ival[0];
+
   if (chunk_size->count > 0) {
     if (chunk_size->ival[0] < 0) {
       fprintf(stderr, "chunk size cannot be negative\n");

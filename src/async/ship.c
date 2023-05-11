@@ -454,7 +454,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       continue;
     }
 
-    // DATA
+    c_assert(c, c->read_state == DATA);
     db_write_op_t op = {
       .type = E_DATA,
       .event.data = {
@@ -526,10 +526,11 @@ static void on_connect(uv_stream_t *server, int status) {
   c_on_connect(c, server);
 }
 
+static uv_tcp_t server;
+
 bool ship_server_init(uv_loop_t *loop, int port) {
   g_loop = loop;
 
-  uv_tcp_t server;
   struct sockaddr_in addr;
   uv_tcp_init(g_loop, &server);
   uv_ip4_addr("0.0.0.0", port, &addr);
@@ -543,6 +544,11 @@ bool ship_server_init(uv_loop_t *loop, int port) {
     g_error("listen error: %s", uv_strerror(r));
     return false;
   }
+
+  g_info("listening on 0.0.0.0:%d", port);
+  g_info("max tx size = %lu", knob.tx_size);
+  g_info("max chunk size = %lu", knob.chunk_size);
+  g_info("per-ship buffer size = %lu", knob.read_buffer_size);
 
   return true;
 }

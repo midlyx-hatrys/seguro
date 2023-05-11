@@ -28,6 +28,7 @@ typedef struct scope {
 } scope_t;
 
 extern log_level_t log_level;
+extern size_t log_payload_width;
 extern scope_t *log_scope;
 
 void vlog(const char *file, size_t line, const char *function,

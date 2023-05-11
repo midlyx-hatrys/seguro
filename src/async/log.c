@@ -5,11 +5,11 @@
 #include <string.h>
 
 log_level_t log_level = LEVEL_info;
+size_t log_payload_width = 100;
+
 scope_t *log_scope;
 
 static size_t indentation;
-
-static size_t line_width = 100;
 
 static const char *level_str(log_level_t level) {
   switch (level) {
@@ -25,10 +25,13 @@ static const char *level_str(log_level_t level) {
 }
 
 static const char *pretty_fname(const char *fname) {
+  if (!strncmp(fname, "src/", 4))
+    return &fname[4];
+
   size_t len = strlen(fname);
   size_t i;
   for (i = len - 1; i != 0; i--) {
-    if (fname[i] == '/' && len - i > 4 && !strncmp(&fname[i + 1], "src", 3))
+    if (fname[i] == '/' && len - i > 5 && !strncmp(&fname[i + 1], "src/", 4))
       return &fname[i + 5];
   }
   return fname;
@@ -47,8 +50,8 @@ static size_t prefix(log_level_t level, log_context_t *ctx) {
 static void suffix(size_t length,
                    const char *file, size_t line, const char *function) {
   fprintf(stderr, "%*s |%s():%s:%lu\n",
-          (int)(length > line_width ? 0 : line_width - length), "",
-          function, pretty_fname(file), line);
+          (int)(length > log_payload_width ? 0 : log_payload_width - length),
+          "", function, pretty_fname(file), line);
 }
 
 void vlog(const char *file, size_t line, const char *function,
