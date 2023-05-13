@@ -15,7 +15,7 @@
 
 
 static uv_loop_t *g_loop;
-
+static uv_tcp_t g_server;
 
 #define PATP_MAX 57
 #define PATP_FMT "%57s"
@@ -526,20 +526,18 @@ static void on_connect(uv_stream_t *server, int status) {
   c_on_connect(c, server);
 }
 
-static uv_tcp_t server;
-
 bool ship_server_init(uv_loop_t *loop, int port) {
   g_loop = loop;
 
   struct sockaddr_in addr;
-  uv_tcp_init(g_loop, &server);
+  uv_tcp_init(g_loop, &g_server);
   uv_ip4_addr("0.0.0.0", port, &addr);
-  int r = uv_tcp_bind(&server, (const struct sockaddr *)&addr, 0);
+  int r = uv_tcp_bind(&g_server, (const struct sockaddr *)&addr, 0);
   if (r) {
     g_error("bind error: %s", uv_strerror(r));
     return false;
   }
-  r = uv_listen((uv_stream_t *)&server, 128, on_connect);
+  r = uv_listen((uv_stream_t *)&g_server, 128, on_connect);
   if (r) {
     g_error("listen error: %s", uv_strerror(r));
     return false;
