@@ -18,6 +18,8 @@
       url = "github:midlyx-hatrys/urbit-cob";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    flib.url = "github:cmm/flake-lib";
   };
 
   outputs = inputs @ {
@@ -26,10 +28,9 @@
     , urbit-cob
     , parts
     , mini-compile-commands
+    , flib
   }: parts.lib.mkFlake { inherit inputs; } (let
-    inherit (builtins) attrValues map filter;
-
-    inherit (nixpkgs) lib;
+    inherit (builtins) attrValues;
 
     pkgAttrs = pkgs: let
       llvm = pkgs.llvmPackages_latest;
@@ -83,25 +84,13 @@
         program = "${pkgs.seguro}/bin/test-unit";
       };
 
-      devShells.default = let
-        attrs = pkgAttrs pkgs;
-      in (pkgs.mkShell.override { stdenv = (pkgs.callPackage mini-compile-commands { }).wrap stdenv; })
-        (attrs // {
-          nativeBuildInputs = attrs.nativeBuildInputs ++ devShellInputs;
-
-          shellHook = let
-            allPossibleInputs = stdenv.defaultBuildInputs ++ stdenv.defaultNativeBuildInputs
-                                ++ stdenv.allowedRequisites ++ devShellInputs
-                                ++ attrs.buildInputs ++ attrs.nativeBuildInputs
-                                ++ [stdenv.cc.cc];
-            allowedInputs = lib.subtractLists stdenv.disallowedRequisites allPossibleInputs;
-            inputDrvs = lib.unique (filter lib.isDerivation allowedInputs);
-            infoOuts = map (lib.getOutput "info") inputDrvs;
-            infoPaths = filter builtins.pathExists (map (out: builtins.toPath "${out}/share/info") infoOuts);
-          in ''
-            export INFOPATH=${builtins.concatStringsSep ":" infoPaths}:$INFOPATH
-          '';
-        });
+      devShells.default = (pkgs.mkShell.override { stdenv = (pkgs.callPackage mini-compile-commands { }).wrap stdenv; })
+        (flib.lib.withInfoPath self stdenv (let
+          attrs = pkgAttrs pkgs;
+        in
+          attrs // {
+            nativeBuildInputs = attrs.nativeBuildInputs ++ devShellInputs;
+          }));
     };
   });
 }
