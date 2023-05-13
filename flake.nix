@@ -85,7 +85,7 @@
       };
 
       devShells.default = (pkgs.mkShell.override { stdenv = (pkgs.callPackage mini-compile-commands { }).wrap stdenv; })
-        (flib.lib.withDocPath self stdenv (let
+        (flib.lib.withDocPath { inherit pkgs stdenv; } (let
           attrs = pkgAttrs pkgs;
         in
           attrs // {

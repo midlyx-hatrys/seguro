@@ -2,11 +2,11 @@
   "nodes": {
     "flib": {
       "locked": {
-        "lastModified": 1683998097,
-        "narHash": "sha256-RvZDNtPTMKfiWdWu3TG1VoPbW4Q/341QmzNljX7vJKc=",
+        "lastModified": 1684001196,
+        "narHash": "sha256-VFfylOm7sR2b9JOM6eUtx7kKKdB1tGmLPhS2eEQ2JRQ=",
         "owner": "cmm",
         "repo": "flake-lib",
-        "rev": "78969f574adb67075e9581194af07997443b7788",
+        "rev": "4c629b7e52d69326bc46014fc8c5aec1f0f5a840",
         "type": "github"
       },
       "original": {
