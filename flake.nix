@@ -27,7 +27,9 @@
     , parts
     , mini-compile-commands
   }: parts.lib.mkFlake { inherit inputs; } (let
-    inherit (builtins) attrValues;
+    inherit (builtins) attrValues map filter;
+
+    inherit (nixpkgs) lib;
 
     pkgAttrs = pkgs: let
       llvm = pkgs.llvmPackages_latest;
@@ -64,7 +66,15 @@
       ];
     };
 
-    perSystem = { pkgs, system, ... }: {
+    perSystem = { pkgs, system, ... }: let
+      stdenv = pkgs.stdenv;
+      devShellInputs = attrValues {
+        inherit (pkgs)
+          gdb
+          valgrind
+        ;
+      };
+    in {
       imports = [{ config._module.args.pkgs = import nixpkgs { inherit system; overlays = [self.overlays.default]; }; }];
 
       packages.default = pkgs.seguro;
@@ -75,14 +85,22 @@
 
       devShells.default = let
         attrs = pkgAttrs pkgs;
-      in (pkgs.mkShell.override { stdenv = (pkgs.callPackage mini-compile-commands { }).wrap pkgs.stdenv; })
+      in (pkgs.mkShell.override { stdenv = (pkgs.callPackage mini-compile-commands { }).wrap stdenv; })
         (attrs // {
-          nativeBuildInputs = attrs.nativeBuildInputs ++ (attrValues {
-            inherit (pkgs)
-              gdb
-              valgrind
-            ;
-          });
+          nativeBuildInputs = attrs.nativeBuildInputs ++ devShellInputs;
+
+          shellHook = let
+            allPossibleInputs = stdenv.defaultBuildInputs ++ stdenv.defaultNativeBuildInputs
+                                ++ stdenv.allowedRequisites ++ devShellInputs
+                                ++ attrs.buildInputs ++ attrs.nativeBuildInputs
+                                ++ [stdenv.cc.cc];
+            allowedInputs = lib.subtractLists stdenv.disallowedRequisites allPossibleInputs;
+            inputDrvs = lib.unique (filter lib.isDerivation allowedInputs);
+            infoOuts = map (lib.getOutput "info") inputDrvs;
+            infoPaths = filter builtins.pathExists (map (out: builtins.toPath "${out}/share/info") infoOuts);
+          in ''
+            export INFOPATH=${builtins.concatStringsSep ":" infoPaths}:$INFOPATH
+          '';
         });
     };
   });
