@@ -2,8 +2,6 @@
   description = "Seguro";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-
     parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
@@ -32,9 +30,7 @@
   }: parts.lib.mkFlake { inherit inputs; } (let
     inherit (builtins) attrValues;
 
-    pkgAttrs = pkgs: let
-      llvm = pkgs.llvmPackages_latest;
-    in {
+    pkgAttrs = pkgs: {
       name = "seguro";
       src = ./.;
       nativeBuildInputs = attrValues {
@@ -53,7 +49,6 @@
         ;
       }
       ++ [urbit-cob.packages.${pkgs.system}.default];
-      LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
     };
   in {
     systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin"];
