@@ -372,6 +372,8 @@ void c_fetch_eid(client_t *c) {
 
 void c_enq_op(client_t *c, const db_write_op_t *op) {
   db_write_op_t *where = cb_enq(&c->db_write_ops);
+  if (!where)
+    c_terminate_msg(c, "db op buffer alloc failure");
   *where = *op;
   // TODO trigger shit here
 }
