@@ -15,7 +15,7 @@ static const char *level_str(log_level_t level) {
   switch (level) {
     case LEVEL_fatal: return "!!!";
     case LEVEL_error: return "!";
-    case LEVEL_warn: return "?";
+    case LEVEL_warning: return "?";
     case LEVEL_info: return ":";
     case LEVEL_debug: return "_";
     case LEVEL_trace: return ".";
@@ -71,8 +71,8 @@ void scope_enter(scope_t *scope, const char *name,
                  const char *file, size_t line, const char *function,
                  log_context_t *ctx, const char *fmt, ...) {
   if (LEVEL_trace <= log_level) {
-    prefix(LEVEL_trace, ctx);
-    size_t length = fprintf(stderr, "-> %s(", name ?: function);
+    size_t length = prefix(LEVEL_trace, ctx);
+    length += fprintf(stderr, "-> %s(", name ?: function);
 
     if (fmt) {
       va_list args;
@@ -93,6 +93,7 @@ void scope_enter(scope_t *scope, const char *name,
   scope->line = line;
   scope->function = function;
 }
+
 void scope_exit(scope_t *scope) {
   log_scope = scope->parent;
   indentation = scope->parent_indentation;

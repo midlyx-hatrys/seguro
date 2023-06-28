@@ -157,16 +157,16 @@ static void c_enq_op(client_t *c, const db_write_op_t *op);
 
 static void on_connect(uv_stream_t *server, int status);
 
-#define c_fatal(c, args...) log_fatal(&((c)->ctx), args)
-#define c_error(c, args...) log_error(&((c)->ctx), args)
-#define c_warn(c, args...) log_warn(&((c)->ctx), args)
-#define c_info(c, args...) log_info(&((c)->ctx), args)
-#define c_debug(c, args...) log_debug(&((c)->ctx), args)
-#define c_trace(c, args...) log_trace(&((c)->ctx), args)
-#define c_scope(c, args...) log_scope(&((c)->ctx), args)
-#define c_scope_f(c, fmt...) log_scope(&((c)->ctx), NULL, fmt)
-#define c_trace_f(c) log_scope(&((c)->ctx), NULL, NULL)
-#define c_assert(c, cond) log_assert(&((c)->ctx), cond)
+#define c_die(c, args...) die(&((c)->ctx), args)
+#define c_complain(c, args...) complain(&((c)->ctx), args)
+#define c_warn(c, args...) warn(&((c)->ctx), args)
+#define c_inform(c, args...) inform(&((c)->ctx), args)
+#define c_blab(c, args...) blab(&((c)->ctx), args)
+#define c_spew(c, args...) spew(&((c)->ctx), args)
+#define c_named_scope(c, args...) scope(&((c)->ctx), args)
+#define c_scope(c, fmt...) scope(&((c)->ctx), NULL, fmt)
+#define c_spew_f(c) scope(&((c)->ctx), NULL, NULL)
+#define c_assert(c, cond) assert(&((c)->ctx), cond)
 
 bool c_init(client_t *c) {
   memset(c, 0, sizeof(*c));
@@ -261,7 +261,7 @@ void c_write_ctl(client_t *c, const char *fmt, ...) {
 }
 
 bool c_process_ctl(client_t *c) {
-  c_scope_f(c, "%s, %s", proto_state_str[c->state], c->ctl_buf);
+  c_scope(c, "%s, %s", proto_state_str[c->state], c->ctl_buf);
   c_assert(c, c->read_state == COMMAND);
   int n_read;
   int length = strlen(c->ctl_buf);
@@ -271,7 +271,7 @@ bool c_process_ctl(client_t *c) {
       if (sscanf(c->ctl_buf, "HELLO %hi%n", &proto_version, &n_read) != 1
           || n_read != length
           || proto_version != 0) {
-        c_error(c, "expected: HELLO 0");
+        c_complain(c, "expected: HELLO 0");
         return false;
       }
       c->read_state = NONE;
@@ -283,13 +283,13 @@ bool c_process_ctl(client_t *c) {
       if (sscanf(c->ctl_buf, "POINT ~" PATP_FMT "%n",
                  &c->point.patp[1], &n_read) != 1
           || n_read != length) {
-        c_error(c, "expected: POINT @p");
+        c_complain(c, "expected: POINT @p");
         return false;
       }
       c->point.patp[0] = '~';
       mpz_t pat; mpz_init(pat);
       if (!patp2num(pat, c->point.patp)) {
-        c_error(c, "invalid @p");
+        c_complain(c, "invalid @p");
         return false;
       }
       size_t i;
@@ -300,7 +300,7 @@ bool c_process_ctl(client_t *c) {
         mpz_tdiv_q_2exp(pat, pat, 8 * sizeof(unsigned long));
       }
       if (mpz_cmp_ui(pat, 0L) != 0) {
-        c_error(c, "%s is too big for a point", c->point.patp);
+        c_complain(c, "%s is too big for a point", c->point.patp);
         return false;
       }
       c->read_state = NONE;
@@ -314,7 +314,7 @@ bool c_process_ctl(client_t *c) {
                  &x, &y, &z, &n_read) == 3
           || n_read == length) {
         if (y <= c->highest_eid || y >= z) {
-          c_error(c, "malformed WRITE BATCH");
+          c_complain(c, "malformed WRITE BATCH");
           return false;
         }
         c->data.flow.batch.events_left = x;
@@ -326,7 +326,7 @@ bool c_process_ctl(client_t *c) {
                         &x, &y, &n_read) == 2
                  || n_read == length) {
         if (x <= c->highest_eid) {
-          c_error(c, "malformed WRITE");
+          c_complain(c, "malformed WRITE");
           return false;
         }
         c_event_start(c, x, y);
@@ -340,7 +340,7 @@ bool c_process_ctl(client_t *c) {
         c->read_state = NONE;
         c->next_state = R_DATA;
       } else {
-        c_error(c, "unexpected directive: %s", c->ctl_buf);
+        c_complain(c, "unexpected directive: %s", c->ctl_buf);
         return false;
       }
       break;
@@ -350,7 +350,7 @@ bool c_process_ctl(client_t *c) {
       if (sscanf(c->ctl_buf, "EVENT %lu %lu%n", &x, &y, &n_read) != 2
           || n_read != length
           || x <= c->highest_eid) {
-        c_error(c, "malformed EVENT");
+        c_complain(c, "malformed EVENT");
         return false;
       }
       c_event_start(c, x, y);
@@ -359,7 +359,7 @@ bool c_process_ctl(client_t *c) {
       break;
     }
     default:
-      log_fatal(&c->ctx, "unexpected control state %s", proto_state_str[c->state]);
+      die(&c->ctx, "unexpected control state %s", proto_state_str[c->state]);
       break;
   }
 
@@ -398,7 +398,7 @@ void c_on_read_start(uv_handle_t *handle,
 
 void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   client_t *c = container_of(stream, client_t, uv.tcp);
-  c_scope_f(c, "%s:%s, %ld, %lu",
+  c_scope(c, "%s:%s, %ld, %lu",
             proto_state_str[c->state], read_mode_str[c->read_state],
             nread, buf->base - (char *)c->read_buf.b);
 
@@ -406,7 +406,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     if (nread != UV_EOF)
       c_terminate_msg(c, "client read failed: %s", uv_strerror(nread));
     else {
-      c_debug(c, "EOF");
+      c_blab(c, "EOF");
       c_terminate(c);
     }
     return;
@@ -419,7 +419,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   char *base = buf->base;
   size_t left = (size_t)nread;
   while (left) {
-    c_debug(c, "%s:%s, %lu",
+    c_blab(c, "%s:%s, %lu",
             proto_state_str[c->state], read_mode_str[c->read_state],
             left);
 
@@ -494,7 +494,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 }
 
 void c_on_connect(client_t *c, uv_stream_t *server) {
-  c_trace_f(c);
+  c_spew_f(c);
   uv_tcp_init(g_loop, &c->uv.tcp);
   int status = uv_accept(server, c_stream(c));
   if (status < 0) {
@@ -502,7 +502,7 @@ void c_on_connect(client_t *c, uv_stream_t *server) {
     return;
   }
 
-  c_debug(c, "accepted");
+  c_blab(c, "accepted");
   c->uv.open_for.reading = c->uv.open_for.writing = true;
 
   c->state = START;
@@ -511,15 +511,15 @@ void c_on_connect(client_t *c, uv_stream_t *server) {
 }
 
 static void on_connect(uv_stream_t *server, int status) {
-  g_scope_f("status=%d", status);
+  g_scope("status=%d", status);
   if (status < 0) {
-    g_error("connection error: %s", uv_strerror(status));
+    g_complain("connection error: %s", uv_strerror(status));
     return;
   }
 
   client_t *c = malloc(sizeof(client_t));
   if (!c || !c_init(c)) {
-    g_error("alloc failure");
+    g_complain("alloc failure");
     free(c);
     uv_loop_close(g_loop);
     return;
@@ -536,19 +536,19 @@ bool ship_server_init(uv_loop_t *loop, int port) {
   uv_ip4_addr("0.0.0.0", port, &addr);
   int r = uv_tcp_bind(&g_server, (const struct sockaddr *)&addr, 0);
   if (r) {
-    g_error("bind error: %s", uv_strerror(r));
+    g_complain("bind error: %s", uv_strerror(r));
     return false;
   }
   r = uv_listen((uv_stream_t *)&g_server, 128, on_connect);
   if (r) {
-    g_error("listen error: %s", uv_strerror(r));
+    g_complain("listen error: %s", uv_strerror(r));
     return false;
   }
 
-  g_info("listening on 0.0.0.0:%d", port);
-  g_info("max tx size = %lu", knob.tx_size);
-  g_info("max chunk size = %lu", knob.chunk_size);
-  g_info("per-ship buffer size = %lu", knob.read_buffer_size);
+  g_inform("listening on 0.0.0.0:%d", port);
+  g_inform("max tx size = %lu", knob.tx_size);
+  g_inform("max chunk size = %lu", knob.chunk_size);
+  g_inform("per-ship buffer size = %lu", knob.read_buffer_size);
 
   return true;
 }
