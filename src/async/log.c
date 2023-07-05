@@ -67,18 +67,15 @@ void vlog(const char *file, size_t line, const char *function,
     abort();
 }
 
-void scope_enter(scope_t *scope, const char *name,
-                 const char *file, size_t line, const char *function,
-                 log_context_t *ctx, const char *fmt, ...) {
+void scope_enter_for_real(scope_t *scope, const char *name,
+                          const char *file, size_t line, const char *function,
+                          log_context_t *ctx, const char *fmt, va_list ap) {
   if (LEVEL_trace <= log_level) {
     size_t length = prefix(LEVEL_trace, ctx);
     length += fprintf(stderr, "-> %s(", name ?: function);
 
     if (fmt) {
-      va_list args;
-      va_start(args, fmt);
-      length += vfprintf(stderr, fmt, args);
-      va_end(args);
+      length += vfprintf(stderr, fmt, ap);
     }
 
     length += fprintf(stderr, ")");
@@ -94,7 +91,7 @@ void scope_enter(scope_t *scope, const char *name,
   scope->function = function;
 }
 
-void scope_exit(scope_t *scope) {
+void scope_exit_for_real(scope_t *scope) {
   log_scope = scope->parent;
   indentation = scope->parent_indentation;
 

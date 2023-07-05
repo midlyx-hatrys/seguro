@@ -160,12 +160,12 @@ static void on_connect(uv_stream_t *server, int status);
 #define c_die(c, args...) die(&((c)->ctx), args)
 #define c_complain(c, args...) complain(&((c)->ctx), args)
 #define c_warn(c, args...) warn(&((c)->ctx), args)
-#define c_inform(c, args...) inform(&((c)->ctx), args)
-#define c_blab(c, args...) blab(&((c)->ctx), args)
-#define c_spew(c, args...) spew(&((c)->ctx), args)
+#define c_tell(c, args...) tell(&((c)->ctx), args)
+#define c_mumble(c, args...) mumble(&((c)->ctx), args)
+#define c_hum(c, args...) hum(&((c)->ctx), args)
 #define c_named_scope(c, args...) scope(&((c)->ctx), args)
 #define c_scope(c, fmt...) scope(&((c)->ctx), NULL, fmt)
-#define c_spew_f(c) scope(&((c)->ctx), NULL, NULL)
+#define c_scope_f(c) scope(&((c)->ctx), NULL, NULL)
 #define c_assert(c, cond) assert(&((c)->ctx), cond)
 
 bool c_init(client_t *c) {
@@ -222,7 +222,7 @@ void fc_terminate(const char *file, int line, const char *function,
 }
 
 void c_on_close(uv_handle_t *handle) {
-  client_t *c = container_of(handle, client_t, uv.tcp);
+  client_t *c = container_of((uv_tcp_t *)handle, client_t, uv.tcp);
   c->uv.open_for.reading = false;
   c_gc(c);
 }
@@ -359,7 +359,7 @@ bool c_process_ctl(client_t *c) {
       break;
     }
     default:
-      die(&c->ctx, "unexpected control state %s", proto_state_str[c->state]);
+      c_die(c, "unexpected control state %s", proto_state_str[c->state]);
       break;
   }
 
@@ -391,13 +391,13 @@ void c_event_start(client_t *c, uint64_t id, uint64_t length) {
 
 void c_on_read_start(uv_handle_t *handle,
                      size_t suggested_size, uv_buf_t *buf) {
-  client_t *c = container_of(handle, client_t, uv.tcp);
+  client_t *c = container_of((uv_tcp_t *)handle, client_t, uv.tcp);
   buf->base = cb_w_ptr(&c->read_buf);
   buf->len = cb_cw_headroom(&c->read_buf);
 }
 
 void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
-  client_t *c = container_of(stream, client_t, uv.tcp);
+  client_t *c = container_of((uv_tcp_t *)stream, client_t, uv.tcp);
   c_scope(c, "%s:%s, %ld, %lu",
             proto_state_str[c->state], read_mode_str[c->read_state],
             nread, buf->base - (char *)c->read_buf.b);
@@ -406,7 +406,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     if (nread != UV_EOF)
       c_terminate_msg(c, "client read failed: %s", uv_strerror(nread));
     else {
-      c_blab(c, "EOF");
+      c_mumble(c, "EOF");
       c_terminate(c);
     }
     return;
@@ -419,7 +419,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   char *base = buf->base;
   size_t left = (size_t)nread;
   while (left) {
-    c_blab(c, "%s:%s, %lu",
+    c_mumble(c, "%s:%s, %lu",
             proto_state_str[c->state], read_mode_str[c->read_state],
             left);
 
@@ -494,7 +494,7 @@ void c_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 }
 
 void c_on_connect(client_t *c, uv_stream_t *server) {
-  c_spew_f(c);
+  c_scope_f(c);
   uv_tcp_init(g_loop, &c->uv.tcp);
   int status = uv_accept(server, c_stream(c));
   if (status < 0) {
@@ -502,7 +502,7 @@ void c_on_connect(client_t *c, uv_stream_t *server) {
     return;
   }
 
-  c_blab(c, "accepted");
+  c_mumble(c, "accepted");
   c->uv.open_for.reading = c->uv.open_for.writing = true;
 
   c->state = START;
@@ -545,10 +545,10 @@ bool ship_server_init(uv_loop_t *loop, int port) {
     return false;
   }
 
-  g_inform("listening on 0.0.0.0:%d", port);
-  g_inform("max tx size = %lu", knob.tx_size);
-  g_inform("max chunk size = %lu", knob.chunk_size);
-  g_inform("per-ship buffer size = %lu", knob.read_buffer_size);
+  g_tell("listening on 0.0.0.0:%d", port);
+  g_tell("max tx size = %lu", knob.tx_size);
+  g_tell("max chunk size = %lu", knob.chunk_size);
+  g_tell("per-ship buffer size = %lu", knob.read_buffer_size);
 
   return true;
 }

@@ -1,7 +1,15 @@
 #pragma once
 
-#define container_of(ptr, type, member) \
-  ((type *)((uint8_t *)(ptr) - offsetof(type, member)))
+#include <stdbool.h>
+
+#define container_of(ptr, type, member) ({                      \
+      const typeof( ((type *)0)->member ) *__mptr = (ptr);      \
+      (type *)( (char *)__mptr - offsetof(type,member) );})
+
+#define likely(expr) \
+  __builtin_expect(expr, true)
+#define unlikely(expr) \
+  __builtin_expect(expr, false)
 
 #define _minmax(a, b, op)                               \
   ({ __auto_type _a = (a); __auto_type _b = (b);        \
